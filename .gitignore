@@ -1,0 +1,21 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Vector store data
+chroma_db/
+
+# HuggingFace model cache
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project docs and local Claude config (not committed)
+PLAN.md
+SRS.md
+CLAUDE.md
+.claude/
