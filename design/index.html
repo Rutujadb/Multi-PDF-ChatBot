@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Multi-PDF ChatBot — Chat with your documents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Outfit', 'ui-sans-serif', 'system-ui'],
+          mono: ['"JetBrains Mono"', 'ui-monospace'],
+        },
+        colors: {
+          ink: '#111827',
+          paper: '#FFFFFF',
+          muted: '#F3F4F6',
+          line: '#E5E7EB',
+          brand: { 500: '#3B82F6', 600: '#2563EB', 50: '#EFF6FF', 100: '#DBEAFE' },
+          emerald2: { 500: '#10B981', 600: '#059669', 50: '#ECFDF5', 100: '#D1FAE5' },
+          amber2: { 500: '#F59E0B', 600: '#D97706', 50: '#FFFBEB', 100: '#FEF3C7' },
+        },
+        letterSpacing: { tightest: '-0.04em' },
+      }
+    }
+  }
+</script>
+<style>
+  html, body { font-family: 'Outfit', sans-serif; color: #111827; }
+  .h-display { letter-spacing: -0.04em; line-height: 0.92; }
+  .h-tight { letter-spacing: -0.02em; line-height: 1.0; }
+  .label { font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; font-size: 12px; }
+  .btn-primary { transition: all .2s ease; }
+  .btn-primary:hover { transform: scale(1.04); background:#2563EB; }
+  .btn-outline { transition: all .2s ease; }
+  .btn-outline:hover { background:#111827; color:#fff; transform: scale(1.03); }
+  .card-hover { transition: all .2s ease; }
+  .card-hover:hover { transform: scale(1.02); }
+  .group:hover .icon-pop { transform: scale(1.12); }
+  .icon-pop { transition: transform .2s ease; }
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,.10) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,.10) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+  .stripe-pattern {
+    background-image: repeating-linear-gradient(45deg, rgba(17,24,39,.04) 0 8px, transparent 8px 16px);
+  }
+  /* placeholder UI inside hero */
+  .ph-bar { height: 10px; border-radius: 3px; }
+  .ph-line { height: 8px; border-radius: 999px; background:#E5E7EB; }
+</style>
+</head>
+<body class="bg-paper text-ink antialiased">
+
+<!-- ╔══ NAV ══╗ -->
+<header class="border-b border-line">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 h-20 flex items-center justify-between">
+    <a href="index.html" class="flex items-center gap-3 group">
+      <span class="relative inline-flex items-center justify-center w-10 h-10 bg-ink rounded-md">
+        <span class="absolute w-5 h-5 bg-brand-500 rounded-sm -translate-x-1 -translate-y-1"></span>
+        <span class="absolute w-5 h-5 bg-amber2-500 rounded-sm translate-x-1 translate-y-1"></span>
+        <span class="relative w-3 h-3 bg-paper rounded-[2px]"></span>
+      </span>
+      <span class="font-extrabold text-xl h-tight">Multi-PDF<span class="text-brand-500">·</span>ChatBot</span>
+    </a>
+    <nav class="hidden md:flex items-center gap-8 text-sm font-medium">
+      <a href="#how" class="hover:text-brand-500 transition-colors">How it works</a>
+      <a href="#features" class="hover:text-brand-500 transition-colors">Features</a>
+      <a href="#stack" class="hover:text-brand-500 transition-colors">Stack</a>
+      <a href="#faq" class="hover:text-brand-500 transition-colors">FAQ</a>
+    </nav>
+    <div class="flex items-center gap-3">
+      <a href="https://github.com" target="_blank" rel="noopener" class="inline-flex h-11 px-4 items-center gap-2 rounded-md border-2 border-ink text-ink text-sm font-semibold btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.99 3.23 9.21 7.71 10.7.56.1.77-.24.77-.54v-1.9c-3.14.68-3.8-1.51-3.8-1.51-.51-1.31-1.25-1.66-1.25-1.66-1.03-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.51-2.5-.28-5.13-1.25-5.13-5.57 0-1.23.44-2.24 1.16-3.03-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.16.9-.25 1.86-.37 2.82-.38.96.01 1.92.13 2.82.38 2.15-1.46 3.1-1.16 3.1-1.16.61 1.55.23 2.7.11 2.98.72.79 1.16 1.8 1.16 3.03 0 4.33-2.64 5.28-5.15 5.56.41.36.77 1.06.77 2.14v3.17c0 .31.21.65.78.54 4.48-1.49 7.7-5.71 7.7-10.7C23.25 5.48 18.27.5 12 .5z"/></svg>
+        GitHub
+      </a>
+      <a href="dashboard.html" class="inline-flex h-11 px-5 items-center rounded-md bg-ink text-paper text-sm font-semibold btn-primary">Open app →</a>
+    </div>
+  </div>
+</header>
+
+<!-- ╔══ HERO ══╗ -->
+<section class="relative overflow-hidden bg-brand-500 text-paper">
+  <!-- decorative geometry -->
+  <div class="absolute inset-0 grid-bg pointer-events-none"></div>
+  <div class="absolute -top-32 -right-32 w-[520px] h-[520px] rounded-full bg-paper/10"></div>
+  <div class="absolute top-40 right-40 w-40 h-40 rounded-full bg-amber2-500"></div>
+  <div class="absolute -bottom-24 -left-24 w-[420px] h-[420px] rotate-12 bg-ink/15 rounded-3xl"></div>
+  <div class="absolute bottom-20 left-[36%] w-24 h-24 rotate-45 bg-emerald2-500"></div>
+
+  <div class="relative max-w-7xl mx-auto px-6 lg:px-10 pt-20 pb-28 grid lg:grid-cols-12 gap-10 items-center">
+    <div class="lg:col-span-7">
+      <div class="inline-flex items-center gap-2 bg-ink text-paper px-3 h-8 rounded-md label">
+        <span class="w-2 h-2 bg-emerald2-500 rounded-sm"></span> Document RAG · self-hosted
+      </div>
+      <h1 class="mt-6 h-display font-black text-[88px] sm:text-[112px] lg:text-[148px]">
+        Chat<br/>with<br/>your <span class="bg-ink text-paper px-3 inline-block -skew-x-0 rounded-md">PDFs.</span>
+      </h1>
+      <p class="mt-8 max-w-xl text-lg font-medium text-paper/90 leading-relaxed">
+        Drop in a stack of documents. Ask anything. Get grounded answers with citations — powered by a local vector store and a free-tier LLM.
+      </p>
+      <div class="mt-10 flex flex-wrap gap-3">
+        <a href="dashboard.html" class="inline-flex h-16 px-8 items-center rounded-md bg-paper text-ink font-bold text-lg btn-primary" style="--tw-hover-bg:#fff">
+          Open the dashboard
+          <svg class="ml-3" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="round"/></svg>
+        </a>
+        <a href="#how" class="inline-flex h-16 px-8 items-center rounded-md border-4 border-paper text-paper font-bold text-lg btn-outline">
+          See how it works
+        </a>
+      </div>
+
+      <div class="mt-12 flex flex-wrap items-center gap-x-10 gap-y-4 text-sm font-medium text-paper/80">
+        <div class="flex items-center gap-2"><span class="w-2 h-2 bg-paper rounded-sm"></span> Local embeddings · no API key</div>
+        <div class="flex items-center gap-2"><span class="w-2 h-2 bg-paper rounded-sm"></span> Persistent ChromaDB</div>
+        <div class="flex items-center gap-2"><span class="w-2 h-2 bg-paper rounded-sm"></span> Source-cited answers</div>
+      </div>
+    </div>
+
+    <!-- right-side poster card -->
+    <div class="lg:col-span-5">
+      <div class="relative">
+        <div class="absolute -top-4 -left-4 w-24 h-24 bg-amber2-500 rounded-md"></div>
+        <div class="absolute -bottom-6 -right-6 w-32 h-32 bg-emerald2-500 rounded-full"></div>
+        <div class="relative bg-paper text-ink rounded-lg p-6">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 bg-ink rounded-sm"></span>
+              <span class="font-bold text-sm">Chat session</span>
+            </div>
+            <span class="label text-ink/60">live</span>
+          </div>
+          <div class="mt-5 space-y-4">
+            <!-- user msg -->
+            <div class="flex justify-end">
+              <div class="max-w-[80%] bg-ink text-paper rounded-md p-3 text-sm">
+                Summarise the Q3 risks across both filings.
+              </div>
+            </div>
+            <!-- assistant msg -->
+            <div class="flex gap-3">
+              <span class="w-8 h-8 bg-brand-500 rounded-md grid place-items-center text-paper font-bold text-sm flex-shrink-0">A</span>
+              <div class="flex-1">
+                <div class="bg-muted rounded-md p-3 text-sm leading-relaxed">
+                  Three risks repeat across the filings: <strong>supply concentration</strong>, FX exposure in EMEA, and a renewal cliff on a top-5 contract.
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <span class="inline-flex items-center gap-1 h-6 px-2 bg-brand-50 text-brand-600 text-xs font-semibold rounded-md">
+                    <span class="w-1.5 h-1.5 bg-brand-500 rounded-sm"></span> 10-Q_2024.pdf · p.14
+                  </span>
+                  <span class="inline-flex items-center gap-1 h-6 px-2 bg-emerald2-50 text-emerald2-600 text-xs font-semibold rounded-md">
+                    <span class="w-1.5 h-1.5 bg-emerald2-500 rounded-sm"></span> annual_report.pdf · p.41
+                  </span>
+                </div>
+              </div>
+            </div>
+            <!-- chips -->
+            <div class="pt-1 flex flex-wrap gap-2">
+              <span class="h-7 px-3 inline-flex items-center text-xs font-semibold bg-muted rounded-md">What changed YoY?</span>
+              <span class="h-7 px-3 inline-flex items-center text-xs font-semibold bg-muted rounded-md">Show the FX figures</span>
+            </div>
+          </div>
+          <div class="mt-5 flex items-center gap-2 bg-muted rounded-md p-2.5">
+            <div class="flex-1 text-sm text-ink/50">Ask a follow-up…</div>
+            <button class="w-9 h-9 grid place-items-center bg-ink text-paper rounded-md">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ MARQUEE STAT BAR ══╗ -->
+<section class="border-y border-line bg-paper">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 grid grid-cols-2 lg:grid-cols-4">
+    <div class="py-10 pr-6 border-r border-line">
+      <div class="text-5xl font-extrabold text-brand-500 h-tight">384</div>
+      <div class="mt-2 label text-ink/60">embedding dims</div>
+    </div>
+    <div class="py-10 px-6 lg:border-r border-line">
+      <div class="text-5xl font-extrabold text-emerald2-500 h-tight">≤ 15s</div>
+      <div class="mt-2 label text-ink/60">query-to-answer</div>
+    </div>
+    <div class="py-10 px-6 border-r border-line">
+      <div class="text-5xl font-extrabold text-amber2-500 h-tight">10k</div>
+      <div class="mt-2 label text-ink/60">chunks supported</div>
+    </div>
+    <div class="py-10 pl-6">
+      <div class="text-5xl font-extrabold text-ink h-tight">$0</div>
+      <div class="mt-2 label text-ink/60">free-tier ready</div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ HOW IT WORKS ══╗ -->
+<section id="how" class="relative bg-ink text-paper overflow-hidden">
+  <div class="absolute -top-16 right-10 w-56 h-56 rotate-12 bg-brand-500/30 rounded-3xl pointer-events-none"></div>
+  <div class="absolute bottom-10 left-10 w-40 h-40 rounded-full bg-amber2-500/20 pointer-events-none"></div>
+
+  <div class="relative max-w-7xl mx-auto px-6 lg:px-10 py-24">
+    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+      <div>
+        <div class="label text-paper/60">How it works</div>
+        <h2 class="mt-3 h-display font-black text-6xl lg:text-7xl">Two phases.<br/>One pipeline.</h2>
+      </div>
+      <p class="max-w-md text-paper/80 text-lg">A retrieval-augmented generation flow. Index your PDFs locally; query them through a conversational chain that cites the source.</p>
+    </div>
+
+    <div class="mt-16 grid lg:grid-cols-2 gap-6">
+      <!-- Phase 1 -->
+      <div class="bg-paper text-ink rounded-lg p-8 lg:p-10 card-hover relative overflow-hidden">
+        <div class="absolute -right-10 -top-10 w-32 h-32 rounded-full bg-brand-100"></div>
+        <div class="relative flex items-center gap-4">
+          <span class="w-12 h-12 grid place-items-center rounded-md bg-brand-500 text-paper font-extrabold text-xl">1</span>
+          <div class="label text-brand-500">Indexing</div>
+        </div>
+        <h3 class="relative mt-6 font-extrabold text-3xl h-tight">Drop a PDF.<br/>We chunk + embed.</h3>
+        <ul class="relative mt-8 space-y-3 text-[15px]">
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-brand-500 rounded-sm"></span><span><strong>PyPDFLoader</strong> reads each page in order.</span></li>
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-brand-500 rounded-sm"></span><span><strong>RecursiveCharacterTextSplitter</strong> — 500 char chunks, 50 char overlap.</span></li>
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-brand-500 rounded-sm"></span><span><strong>all-MiniLM-L6-v2</strong> generates 384-dim vectors locally.</span></li>
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-brand-500 rounded-sm"></span><span>Written to <strong>ChromaDB</strong> with source + page metadata.</span></li>
+        </ul>
+      </div>
+
+      <!-- Phase 2 -->
+      <div class="bg-paper text-ink rounded-lg p-8 lg:p-10 card-hover relative overflow-hidden">
+        <div class="absolute -right-10 -top-10 w-32 h-32 rounded-full bg-emerald2-100"></div>
+        <div class="relative flex items-center gap-4">
+          <span class="w-12 h-12 grid place-items-center rounded-md bg-emerald2-500 text-paper font-extrabold text-xl">2</span>
+          <div class="label text-emerald2-600">Query</div>
+        </div>
+        <h3 class="relative mt-6 font-extrabold text-3xl h-tight">Ask a question.<br/>We retrieve + ground.</h3>
+        <ul class="relative mt-8 space-y-3 text-[15px]">
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-emerald2-500 rounded-sm"></span><span>Chat history + question condensed to a standalone query.</span></li>
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-emerald2-500 rounded-sm"></span><span>Top-4 chunks retrieved by cosine similarity.</span></li>
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-emerald2-500 rounded-sm"></span><span><strong>Gemini 2.0 Flash</strong> generates the answer, grounded in context.</span></li>
+          <li class="flex items-start gap-3"><span class="mt-1.5 w-2 h-2 bg-emerald2-500 rounded-sm"></span><span>Sources shown beneath each response.</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ FEATURES (color blocks) ══╗ -->
+<section id="features" class="bg-paper">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-24">
+    <div class="grid lg:grid-cols-3 gap-6 items-end">
+      <div class="lg:col-span-2">
+        <div class="label text-ink/60">Capabilities</div>
+        <h2 class="mt-3 h-display font-black text-6xl lg:text-7xl">Everything the<br/>SRS asks for.</h2>
+      </div>
+      <p class="text-ink/70 text-lg">Six functional pillars — built from open-source pieces, no paid infra required.</p>
+    </div>
+
+    <div class="mt-14 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      <!-- 1 -->
+      <article class="group bg-brand-50 rounded-lg p-8 card-hover hover:bg-brand-100">
+        <div class="w-14 h-14 rounded-full bg-paper grid place-items-center icon-pop">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2.5"><path d="M12 4v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg>
+        </div>
+        <h3 class="mt-6 font-extrabold text-2xl h-tight">Multi-PDF upload</h3>
+        <p class="mt-3 text-ink/70">Drop multiple files at once. Each chunk is tagged with source + page so citations stay accurate.</p>
+        <div class="mt-5 label text-brand-600">FR-PDF-01 → 05</div>
+      </article>
+
+      <!-- 2 -->
+      <article class="group bg-emerald2-50 rounded-lg p-8 card-hover hover:bg-emerald2-100">
+        <div class="w-14 h-14 rounded-full bg-paper grid place-items-center icon-pop">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        </div>
+        <h3 class="mt-6 font-extrabold text-2xl h-tight">Semantic retrieval</h3>
+        <p class="mt-3 text-ink/70">Cosine-similarity search over ChromaDB returns the top-4 chunks — across every file, not just one.</p>
+        <div class="mt-5 label text-emerald2-600">FR-VS-01 → 03</div>
+      </article>
+
+      <!-- 3 -->
+      <article class="group bg-amber2-50 rounded-lg p-8 card-hover hover:bg-amber2-100">
+        <div class="w-14 h-14 rounded-full bg-paper grid place-items-center icon-pop">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2.5"><path d="M3 12a9 9 0 1018 0 9 9 0 00-18 0z"/><path d="M12 7v5l3 2"/></svg>
+        </div>
+        <h3 class="mt-6 font-extrabold text-2xl h-tight">Conversation memory</h3>
+        <p class="mt-3 text-ink/70">Follow-up questions stay context-aware. The chain condenses history + new query into a standalone search.</p>
+        <div class="mt-5 label text-amber2-600">FR-MEM-01 → 04</div>
+      </article>
+
+      <!-- 4 -->
+      <article class="group bg-muted rounded-lg p-8 card-hover hover:bg-line">
+        <div class="w-14 h-14 rounded-full bg-paper grid place-items-center icon-pop">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#111827" stroke-width="2.5"><path d="M9 12h6M9 16h4M7 4h7l5 5v11a1 1 0 01-1 1H7a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg>
+        </div>
+        <h3 class="mt-6 font-extrabold text-2xl h-tight">Source citations</h3>
+        <p class="mt-3 text-ink/70">Every answer shows which PDF (and page) it came from. The model is told to say "I don't know" if context is missing.</p>
+        <div class="mt-5 label text-ink/60">FR-UI-03 · FR-RAG-04</div>
+      </article>
+
+      <!-- 5 -->
+      <article class="group bg-brand-50 rounded-lg p-8 card-hover hover:bg-brand-100">
+        <div class="w-14 h-14 rounded-full bg-paper grid place-items-center icon-pop">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2.5"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        </div>
+        <h3 class="mt-6 font-extrabold text-2xl h-tight">Persistent store</h3>
+        <p class="mt-3 text-ink/70">ChromaDB writes to disk. Restart the app and your index is still there — no re-upload needed.</p>
+        <div class="mt-5 label text-brand-600">FR-VS-02</div>
+      </article>
+
+      <!-- 6 -->
+      <article class="group bg-emerald2-50 rounded-lg p-8 card-hover hover:bg-emerald2-100">
+        <div class="w-14 h-14 rounded-full bg-paper grid place-items-center icon-pop">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        </div>
+        <h3 class="mt-6 font-extrabold text-2xl h-tight">Swappable backends</h3>
+        <p class="mt-3 text-ink/70">Flip an env var to use Pinecone instead of Chroma, or OpenRouter instead of Gemini. Same chain interface.</p>
+        <div class="mt-5 label text-emerald2-600">FR-VS-04 · FR-RAG-03</div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ STACK SECTION ══╗ -->
+<section id="stack" class="relative bg-emerald2-500 text-paper overflow-hidden">
+  <div class="absolute -bottom-20 -right-16 w-[460px] h-[460px] rounded-full bg-paper/10 pointer-events-none"></div>
+  <div class="absolute top-10 left-1/3 w-32 h-32 bg-ink/15 rotate-12 rounded-3xl pointer-events-none"></div>
+
+  <div class="relative max-w-7xl mx-auto px-6 lg:px-10 py-24 grid lg:grid-cols-12 gap-10">
+    <div class="lg:col-span-5">
+      <div class="label text-paper/70">The stack</div>
+      <h2 class="mt-3 h-display font-black text-6xl lg:text-7xl">Free<br/>tier,<br/>real<br/>RAG.</h2>
+      <p class="mt-6 text-paper/90 text-lg max-w-md">Production-grade patterns with zero billing surprises. Every piece is interchangeable behind a config flag.</p>
+    </div>
+    <div class="lg:col-span-7 grid sm:grid-cols-2 gap-4">
+      <div class="bg-paper text-ink rounded-lg p-6">
+        <div class="label text-emerald2-600">UI</div>
+        <div class="mt-2 font-extrabold text-2xl h-tight">Streamlit</div>
+        <div class="mt-2 font-mono text-xs text-ink/60">streamlit ≥ 1.35</div>
+      </div>
+      <div class="bg-paper text-ink rounded-lg p-6">
+        <div class="label text-brand-600">Orchestration</div>
+        <div class="mt-2 font-extrabold text-2xl h-tight">LangChain</div>
+        <div class="mt-2 font-mono text-xs text-ink/60">ConversationalRetrievalChain</div>
+      </div>
+      <div class="bg-paper text-ink rounded-lg p-6">
+        <div class="label text-amber2-600">Embeddings</div>
+        <div class="mt-2 font-extrabold text-2xl h-tight">HuggingFace</div>
+        <div class="mt-2 font-mono text-xs text-ink/60">all-MiniLM-L6-v2 · local</div>
+      </div>
+      <div class="bg-paper text-ink rounded-lg p-6">
+        <div class="label text-emerald2-600">Vector store</div>
+        <div class="mt-2 font-extrabold text-2xl h-tight">ChromaDB</div>
+        <div class="mt-2 font-mono text-xs text-ink/60">Pinecone optional</div>
+      </div>
+      <div class="bg-paper text-ink rounded-lg p-6 sm:col-span-2">
+        <div class="label text-brand-600">LLM</div>
+        <div class="mt-2 font-extrabold text-3xl h-tight flex items-center gap-3">
+          Gemini 2.0 Flash
+          <span class="text-sm font-semibold text-ink/50">· OpenRouter alt</span>
+        </div>
+        <div class="mt-2 font-mono text-xs text-ink/60">temperature 0.3 · top-k 4 · max_tokens 1024</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ FAQ ══╗ -->
+<section id="faq" class="bg-paper">
+  <div class="max-w-5xl mx-auto px-6 lg:px-10 py-24">
+    <div class="label text-ink/60">FAQ</div>
+    <h2 class="mt-3 h-display font-black text-6xl">Common questions.</h2>
+
+    <div class="mt-12 border-y-2 border-ink">
+      <details class="group border-b-2 border-ink py-6" open>
+        <summary class="cursor-pointer list-none flex items-center justify-between">
+          <h3 class="font-extrabold text-2xl h-tight">Do I need a paid API key?</h3>
+          <span class="w-10 h-10 rounded-md bg-muted grid place-items-center font-black text-xl group-open:bg-ink group-open:text-paper transition-colors">+</span>
+        </summary>
+        <p class="mt-4 text-ink/70 text-lg max-w-3xl">No. The default stack uses Gemini 2.0 Flash via Google AI Studio (free tier) and HuggingFace embeddings that run locally with no key. ChromaDB is open-source and stores everything on your disk.</p>
+      </details>
+
+      <details class="group border-b-2 border-ink py-6">
+        <summary class="cursor-pointer list-none flex items-center justify-between">
+          <h3 class="font-extrabold text-2xl h-tight">What happens when I refresh the browser?</h3>
+          <span class="w-10 h-10 rounded-md bg-muted grid place-items-center font-black text-xl group-open:bg-ink group-open:text-paper transition-colors">+</span>
+        </summary>
+        <p class="mt-4 text-ink/70 text-lg max-w-3xl">Chat history is session-scoped and will reset. Your indexed PDFs persist — ChromaDB writes to <code class="font-mono text-sm bg-muted px-1.5 py-0.5 rounded">./chroma_db/</code> so they're loaded automatically on next start.</p>
+      </details>
+
+      <details class="group border-b-2 border-ink py-6">
+        <summary class="cursor-pointer list-none flex items-center justify-between">
+          <h3 class="font-extrabold text-2xl h-tight">Will it work with scanned PDFs?</h3>
+          <span class="w-10 h-10 rounded-md bg-muted grid place-items-center font-black text-xl group-open:bg-ink group-open:text-paper transition-colors">+</span>
+        </summary>
+        <p class="mt-4 text-ink/70 text-lg max-w-3xl">Not currently. The pipeline expects selectable text. Image-only PDFs are detected on upload and skipped with a clear warning — OCR is on the roadmap.</p>
+      </details>
+
+      <details class="group border-b-2 border-ink py-6">
+        <summary class="cursor-pointer list-none flex items-center justify-between">
+          <h3 class="font-extrabold text-2xl h-tight">How do I swap to Pinecone?</h3>
+          <span class="w-10 h-10 rounded-md bg-muted grid place-items-center font-black text-xl group-open:bg-ink group-open:text-paper transition-colors">+</span>
+        </summary>
+        <p class="mt-4 text-ink/70 text-lg max-w-3xl">Set <code class="font-mono text-sm bg-muted px-1.5 py-0.5 rounded">VECTOR_STORE=pinecone</code> in your <code class="font-mono text-sm bg-muted px-1.5 py-0.5 rounded">.env</code>, plus index name + API key. Core logic doesn't change — that's the maintainability requirement from the SRS.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ CTA ══╗ -->
+<section class="relative bg-amber2-500 overflow-hidden">
+  <div class="absolute -top-20 -left-10 w-72 h-72 rounded-full bg-ink/10 pointer-events-none"></div>
+  <div class="absolute bottom-0 right-0 w-[420px] h-[260px] bg-brand-500 -rotate-6 translate-x-20 translate-y-12 rounded-3xl pointer-events-none"></div>
+
+  <div class="relative max-w-7xl mx-auto px-6 lg:px-10 py-24 grid lg:grid-cols-12 gap-10 items-center">
+    <div class="lg:col-span-8">
+      <div class="label text-ink/70">Ready when you are</div>
+      <h2 class="mt-3 h-display font-black text-6xl lg:text-8xl text-ink">Open the<br/>dashboard.</h2>
+      <p class="mt-6 text-ink/80 text-lg max-w-xl">Upload a few PDFs, hit process, and start asking questions. No sign-up. No billing.</p>
+    </div>
+    <div class="lg:col-span-4 flex lg:justify-end">
+      <a href="dashboard.html" class="inline-flex h-20 px-10 items-center rounded-md bg-ink text-paper font-bold text-xl btn-primary">
+        Launch app
+        <svg class="ml-4" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="round"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ╔══ FOOTER ══╗ -->
+<footer class="bg-ink text-paper">
+  <div class="max-w-7xl mx-auto px-6 lg:px-10 py-16 grid md:grid-cols-12 gap-10">
+    <div class="md:col-span-5">
+      <a href="index.html" class="flex items-center gap-3">
+        <span class="relative inline-flex items-center justify-center w-10 h-10 bg-paper rounded-md">
+          <span class="absolute w-5 h-5 bg-brand-500 rounded-sm -translate-x-1 -translate-y-1"></span>
+          <span class="absolute w-5 h-5 bg-amber2-500 rounded-sm translate-x-1 translate-y-1"></span>
+          <span class="relative w-3 h-3 bg-ink rounded-[2px]"></span>
+        </span>
+        <span class="font-extrabold text-xl h-tight">Multi-PDF<span class="text-brand-500">·</span>ChatBot</span>
+      </a>
+      <p class="mt-5 text-paper/60 max-w-sm">Local-first RAG on your uploaded documents. Built with Streamlit, LangChain, and ChromaDB.</p>
+    </div>
+    <div class="md:col-span-2">
+      <div class="label text-paper/50">Product</div>
+      <ul class="mt-4 space-y-2 text-sm font-medium">
+        <li><a class="hover:text-brand-500" href="#how">How it works</a></li>
+        <li><a class="hover:text-brand-500" href="#features">Features</a></li>
+        <li><a class="hover:text-brand-500" href="#stack">Stack</a></li>
+        <li><a class="hover:text-brand-500" href="dashboard.html">Dashboard</a></li>
+      </ul>
+    </div>
+    <div class="md:col-span-2">
+      <div class="label text-paper/50">Docs</div>
+      <ul class="mt-4 space-y-2 text-sm font-medium">
+        <li><a class="hover:text-brand-500" href="#">SRS</a></li>
+        <li><a class="hover:text-brand-500" href="#">README</a></li>
+        <li><a class="hover:text-brand-500" href="#">PLAN.md</a></li>
+      </ul>
+    </div>
+    <div class="md:col-span-3">
+      <div class="label text-paper/50">Status</div>
+      <div class="mt-4 inline-flex items-center gap-2 bg-paper/10 px-3 h-8 rounded-md">
+        <span class="w-2 h-2 bg-emerald2-500 rounded-sm"></span>
+        <span class="text-sm font-semibold">v1.0.0 · stable</span>
+      </div>
+    </div>
+  </div>
+  <div class="border-t border-paper/10">
+    <div class="max-w-7xl mx-auto px-6 lg:px-10 py-6 flex flex-wrap items-center justify-between gap-3 text-xs text-paper/50 font-medium">
+      <div>© 2026 Multi-PDF ChatBot</div>
+      <div class="font-mono">localhost · 8501</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

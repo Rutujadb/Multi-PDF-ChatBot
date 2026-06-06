@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dashboard — Multi-PDF ChatBot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Outfit', 'ui-sans-serif', 'system-ui'],
+          mono: ['"JetBrains Mono"', 'ui-monospace'],
+        },
+        colors: {
+          ink: '#111827',
+          paper: '#FFFFFF',
+          muted: '#F3F4F6',
+          line: '#E5E7EB',
+          brand: { 500: '#3B82F6', 600: '#2563EB', 50: '#EFF6FF', 100: '#DBEAFE' },
+          emerald2: { 500: '#10B981', 600: '#059669', 50: '#ECFDF5', 100: '#D1FAE5' },
+          amber2: { 500: '#F59E0B', 600: '#D97706', 50: '#FFFBEB', 100: '#FEF3C7' },
+        }
+      }
+    }
+  }
+</script>
+<style>
+  html, body { font-family: 'Outfit', sans-serif; color: #111827; }
+  .h-tight { letter-spacing: -0.02em; }
+  .label { font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; font-size: 11px; }
+  .btn { transition: all .2s ease; }
+  .btn:hover { transform: scale(1.04); }
+  .card-hover { transition: all .2s ease; }
+  .card-hover:hover { transform: scale(1.02); }
+  .icon-pop { transition: transform .2s ease; }
+  .group:hover .icon-pop { transform: scale(1.12); }
+
+  /* dashed dropzone */
+  .dropzone {
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 6px, #3B82F6 6px 12px),
+      repeating-linear-gradient(90deg, transparent 0 6px, #3B82F6 6px 12px),
+      repeating-linear-gradient(180deg, transparent 0 6px, #3B82F6 6px 12px),
+      repeating-linear-gradient(270deg, transparent 0 6px, #3B82F6 6px 12px);
+    background-size: 2px 100%, 100% 2px, 2px 100%, 100% 2px;
+    background-position: 0 0, 0 0, 100% 0, 0 100%;
+    background-repeat: no-repeat;
+  }
+  .dropzone-hover { background-color:#EFF6FF; }
+
+  /* spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { animation: spin 0.9s steps(8) infinite; }
+  @keyframes dot { 0%, 80%, 100% { opacity: .25 } 40% { opacity: 1 } }
+  .dot { animation: dot 1.2s infinite ease-in-out; display:inline-block; width:6px; height:6px; background:#111827; border-radius:1px; margin:0 2px; }
+  .dot:nth-child(2) { animation-delay: .15s; }
+  .dot:nth-child(3) { animation-delay: .3s; }
+
+  /* fade-up entrance */
+  @keyframes up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .fade-up { animation: up .25s ease-out both; }
+
+  /* scrollbar */
+  .scroll::-webkit-scrollbar { width: 10px; }
+  .scroll::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 6px; }
+  .scroll::-webkit-scrollbar-thumb:hover { background: #d4d8de; }
+
+  /* hide details summary marker */
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display:none; }
+</style>
+</head>
+<body class="bg-muted text-ink antialiased h-screen overflow-hidden">
+
+<div class="h-full flex flex-col">
+
+  <!-- ════ TOP BAR ════ -->
+  <header class="bg-paper border-b border-line shrink-0">
+    <div class="h-16 px-5 lg:px-8 flex items-center justify-between">
+      <div class="flex items-center gap-5">
+        <a href="index.html" class="flex items-center gap-3 group">
+          <span class="relative inline-flex items-center justify-center w-9 h-9 bg-ink rounded-md">
+            <span class="absolute w-4 h-4 bg-brand-500 rounded-sm -translate-x-1 -translate-y-1"></span>
+            <span class="absolute w-4 h-4 bg-amber2-500 rounded-sm translate-x-1 translate-y-1"></span>
+            <span class="relative w-2.5 h-2.5 bg-paper rounded-[2px]"></span>
+          </span>
+          <span class="font-extrabold text-lg h-tight hidden sm:inline">Multi-PDF<span class="text-brand-500">·</span>ChatBot</span>
+        </a>
+        <span class="hidden md:inline-flex items-center gap-2 h-7 px-2.5 bg-emerald2-50 text-emerald2-600 rounded-md label">
+          <span class="w-1.5 h-1.5 bg-emerald2-500 rounded-sm"></span> Connected · gemini-2.0-flash
+        </span>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="btn-clear" class="btn h-10 px-4 rounded-md bg-muted hover:bg-line text-sm font-semibold inline-flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M6 6l1 14a1 1 0 001 1h8a1 1 0 001-1l1-14"/></svg>
+          Clear chat
+        </button>
+        <button id="btn-reset" class="btn h-10 px-4 rounded-md bg-muted hover:bg-line text-sm font-semibold inline-flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 109-9M3 3v6h6"/></svg>
+          Reset session
+        </button>
+        <div class="w-px h-8 bg-line mx-1"></div>
+        <button class="btn h-10 px-4 rounded-md bg-ink text-paper text-sm font-semibold inline-flex items-center gap-2">
+          <span class="w-2 h-2 bg-emerald2-500 rounded-sm"></span> Status
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ════ MAIN GRID ════ -->
+  <div class="flex-1 grid grid-cols-12 gap-0 min-h-0">
+
+    <!-- ╔ SIDEBAR ╗ -->
+    <aside class="col-span-12 md:col-span-4 lg:col-span-3 bg-paper border-r border-line flex flex-col min-h-0">
+      <div class="p-6 border-b border-line">
+        <div class="label text-ink/60">Knowledge base</div>
+        <h2 class="mt-1 font-extrabold text-2xl h-tight">Documents</h2>
+      </div>
+
+      <div class="p-6 space-y-6 overflow-y-auto scroll flex-1">
+
+        <!-- DROPZONE -->
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <div class="label text-ink/60">Upload</div>
+            <button class="text-xs font-semibold text-ink/40 hover:text-ink transition-colors" title="Help">?</button>
+          </div>
+          <label id="dropzone" class="dropzone block rounded-lg p-6 text-center cursor-pointer card-hover bg-brand-50/50">
+            <input id="file-input" type="file" accept=".pdf" multiple class="hidden" />
+            <div class="w-12 h-12 mx-auto rounded-full bg-paper grid place-items-center">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2.5"><path d="M12 4v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg>
+            </div>
+            <div class="mt-4 font-bold text-base">Drop PDFs here</div>
+            <div class="mt-1 text-xs font-medium text-ink/60">or click to browse</div>
+            <div class="mt-3 inline-flex items-center gap-1.5 h-5 px-2 bg-paper rounded-md text-[10px] font-bold text-ink/60 tracking-wide font-mono">PDF · 200MB MAX</div>
+          </label>
+        </div>
+
+        <!-- PENDING FILES -->
+        <div id="pending-wrap" class="hidden">
+          <div class="label text-ink/60 mb-3">Queued</div>
+          <div id="pending-list" class="space-y-2"></div>
+          <button id="btn-process" class="btn mt-4 w-full h-12 rounded-md bg-brand-500 hover:bg-brand-600 text-paper font-bold inline-flex items-center justify-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            Process PDFs
+          </button>
+        </div>
+
+        <!-- INDEXED FILES -->
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <div class="label text-ink/60">Indexed</div>
+            <span id="indexed-count" class="label text-brand-500">2 files</span>
+          </div>
+          <div id="indexed-list" class="space-y-2"></div>
+        </div>
+
+        <!-- INDEX STATS -->
+        <div class="bg-muted rounded-lg p-5">
+          <div class="label text-ink/60">Vector store</div>
+          <div class="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <div class="font-extrabold text-2xl h-tight text-brand-500" id="stat-chunks">412</div>
+              <div class="label text-ink/50 mt-0.5">chunks</div>
+            </div>
+            <div>
+              <div class="font-extrabold text-2xl h-tight text-emerald2-500">384</div>
+              <div class="label text-ink/50 mt-0.5">dims</div>
+            </div>
+            <div>
+              <div class="font-extrabold text-2xl h-tight text-amber2-500">4</div>
+              <div class="label text-ink/50 mt-0.5">top-k</div>
+            </div>
+            <div>
+              <div class="font-extrabold text-2xl h-tight text-ink" id="stat-pages">87</div>
+              <div class="label text-ink/50 mt-0.5">pages</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SIDEBAR FOOTER: config -->
+      <div class="p-5 border-t border-line bg-paper">
+        <div class="label text-ink/60 mb-3">Configuration</div>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between bg-muted rounded-md h-9 px-3">
+            <span class="text-xs font-semibold text-ink/60">LLM</span>
+            <span class="text-xs font-mono">gemini-2.0-flash</span>
+          </div>
+          <div class="flex items-center justify-between bg-muted rounded-md h-9 px-3">
+            <span class="text-xs font-semibold text-ink/60">Store</span>
+            <span class="text-xs font-mono">chroma</span>
+          </div>
+          <div class="flex items-center justify-between bg-muted rounded-md h-9 px-3">
+            <span class="text-xs font-semibold text-ink/60">Embeddings</span>
+            <span class="text-xs font-mono">all-MiniLM-L6</span>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ╔ MAIN CHAT ╗ -->
+    <main class="col-span-12 md:col-span-8 lg:col-span-9 flex flex-col min-h-0 bg-paper">
+
+      <!-- Chat header -->
+      <div class="px-8 py-5 border-b border-line flex items-center justify-between">
+        <div>
+          <div class="label text-ink/60">Session</div>
+          <h1 class="mt-1 font-extrabold text-2xl h-tight">Chat with your PDFs</h1>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="hidden lg:inline-flex h-8 px-3 items-center bg-muted rounded-md label text-ink/60">
+            <span class="w-1.5 h-1.5 bg-emerald2-500 rounded-sm mr-2"></span> memory · buffer
+          </span>
+          <button class="btn h-9 px-3 rounded-md bg-muted hover:bg-line text-xs font-semibold inline-flex items-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            Export
+          </button>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div id="messages" class="flex-1 overflow-y-auto scroll px-8 py-8">
+        <!-- populated by JS -->
+      </div>
+
+      <!-- Suggested prompts (visible when applicable) -->
+      <div id="prompts" class="px-8 pb-3">
+        <div class="label text-ink/50 mb-3">Suggested follow-ups</div>
+        <div class="flex flex-wrap gap-2">
+          <button class="prompt-chip btn h-10 px-4 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">What changed year over year?</button>
+          <button class="prompt-chip btn h-10 px-4 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">Summarise the FX exposure</button>
+          <button class="prompt-chip btn h-10 px-4 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">List the renewal cliffs</button>
+          <button class="prompt-chip btn h-10 px-4 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">Pull the cash flow figures</button>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="px-8 pb-8 pt-3 border-t border-line bg-paper">
+        <form id="chat-form" class="relative">
+          <input id="chat-input" type="text" autocomplete="off" placeholder="Ask anything about your indexed PDFs…"
+            class="w-full h-16 bg-muted focus:bg-paper rounded-md px-5 pr-36 text-base font-medium outline-none border-2 border-transparent focus:border-brand-500 transition-colors" />
+          <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+            <button type="button" class="btn h-12 w-12 rounded-md bg-paper hover:bg-muted grid place-items-center" title="Attach">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 11-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66L9.41 17.41a2 2 0 11-2.83-2.83l8.49-8.49"/></svg>
+            </button>
+            <button id="send" type="submit" class="btn h-12 px-5 rounded-md bg-ink hover:bg-brand-500 text-paper font-bold text-sm inline-flex items-center gap-2">
+              Send
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+          </div>
+        </form>
+        <div class="mt-3 flex items-center justify-between text-xs font-medium text-ink/50">
+          <div class="flex items-center gap-4">
+            <span>⏎ to send · Shift + ⏎ for newline</span>
+          </div>
+          <div class="font-mono">temperature 0.3 · top-k 4 · max 1024</div>
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-wrap" class="fixed bottom-6 right-6 space-y-2 z-50"></div>
+
+<script>
+// ╔══ STATE ══╗
+const state = {
+  pending: [],           // {name, size}
+  indexed: [             // start seeded so chat is usable
+    { name: '10-Q_2024.pdf', pages: 38, chunks: 174 },
+    { name: 'annual_report.pdf', pages: 49, chunks: 238 },
+  ],
+  messages: [
+    {
+      role: 'user',
+      text: 'Summarise the Q3 risks across both filings.'
+    },
+    {
+      role: 'assistant',
+      text: 'Three risks repeat across the filings:\n\n• Supply concentration on a single APAC manufacturer (≈42% of unit volume).\n• FX exposure in EMEA, with EUR weakness compressing gross margin by ~180bps.\n• A renewal cliff on a top-5 customer contract scheduled for early Q1.\n\nThe annual report frames these as "monitored" but flags the renewal cliff as elevated.',
+      sources: [
+        { file: '10-Q_2024.pdf', page: 14, color: 'brand' },
+        { file: 'annual_report.pdf', page: 41, color: 'emerald2' },
+        { file: 'annual_report.pdf', page: 52, color: 'emerald2' },
+      ]
+    }
+  ]
+};
+
+// ╔══ HELPERS ══╗
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const colorClasses = {
+  brand: 'bg-brand-50 text-brand-600',
+  emerald2: 'bg-emerald2-50 text-emerald2-600',
+  amber2: 'bg-amber2-50 text-amber2-600',
+};
+const dotClasses = {
+  brand: 'bg-brand-500',
+  emerald2: 'bg-emerald2-500',
+  amber2: 'bg-amber2-500',
+};
+
+// ╔══ TOAST ══╗
+function toast(msg, kind='info') {
+  const palette = { info:'bg-ink text-paper', ok:'bg-emerald2-500 text-paper', warn:'bg-amber2-500 text-ink' };
+  const t = el('div', `fade-up rounded-md px-4 h-12 inline-flex items-center font-semibold text-sm ${palette[kind]||palette.info}`);
+  t.textContent = msg;
+  $('#toast-wrap').appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .25s'; t.style.opacity='0'; setTimeout(()=>t.remove(), 260); }, 2400);
+}
+
+// ╔══ RENDER: SIDEBAR ══╗
+function renderPending() {
+  const wrap = $('#pending-wrap');
+  const list = $('#pending-list');
+  list.innerHTML = '';
+  if (state.pending.length === 0) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  state.pending.forEach((f, i) => {
+    const row = el('div', 'fade-up flex items-center gap-3 bg-muted rounded-md p-3');
+    row.innerHTML = `
+      <span class="w-9 h-9 rounded-md bg-paper grid place-items-center shrink-0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2.5"><path d="M7 4h7l5 5v11a1 1 0 01-1 1H7a1 1 0 01-1-1V5a1 1 0 011-1z"/><path d="M14 4v5h5"/></svg>
+      </span>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-bold truncate">${f.name}</div>
+        <div class="text-[11px] font-mono text-ink/50">${(f.size/1024).toFixed(0)} KB · pending</div>
+      </div>
+      <button data-i="${i}" class="rm-pending btn h-8 w-8 rounded-md hover:bg-line grid place-items-center">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('.rm-pending').forEach(b => b.addEventListener('click', e => {
+    const i = +e.currentTarget.dataset.i;
+    state.pending.splice(i, 1);
+    renderPending();
+  }));
+}
+
+function renderIndexed() {
+  const list = $('#indexed-list');
+  list.innerHTML = '';
+  $('#indexed-count').textContent = `${state.indexed.length} file${state.indexed.length===1?'':'s'}`;
+  const totalChunks = state.indexed.reduce((s,f)=>s+f.chunks,0);
+  const totalPages  = state.indexed.reduce((s,f)=>s+f.pages,0);
+  $('#stat-chunks').textContent = totalChunks;
+  $('#stat-pages').textContent  = totalPages;
+
+  if (state.indexed.length === 0) {
+    list.innerHTML = `<div class="text-sm text-ink/50 italic">No documents indexed yet.</div>`;
+    return;
+  }
+  state.indexed.forEach((f, i) => {
+    const color = ['brand','emerald2','amber2'][i % 3];
+    const row = el('div', `fade-up group rounded-md p-3 ${colorClasses[color]} card-hover`);
+    row.innerHTML = `
+      <div class="flex items-center gap-3">
+        <span class="w-8 h-8 rounded-md bg-paper grid place-items-center shrink-0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><path d="M5 12l5 5 9-11"/></svg>
+        </span>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-bold truncate">${f.name}</div>
+          <div class="text-[11px] font-mono opacity-70">${f.pages} pages · ${f.chunks} chunks</div>
+        </div>
+      </div>`;
+    list.appendChild(row);
+  });
+}
+
+// ╔══ RENDER: MESSAGES ══╗
+function messageNode(m) {
+  if (m.role === 'user') {
+    const wrap = el('div', 'fade-up flex justify-end mb-6');
+    wrap.innerHTML = `
+      <div class="max-w-[78%] bg-ink text-paper rounded-md px-5 py-4 text-[15px] font-medium leading-relaxed">${escapeHtml(m.text)}</div>`;
+    return wrap;
+  }
+  if (m.role === 'thinking') {
+    const wrap = el('div', 'fade-up flex items-start gap-3 mb-6');
+    wrap.innerHTML = `
+      <span class="w-9 h-9 bg-brand-500 rounded-md grid place-items-center text-paper font-extrabold text-sm shrink-0">A</span>
+      <div class="bg-muted rounded-md px-5 py-4 inline-flex items-center gap-2">
+        <span class="text-xs font-bold text-ink/60 label">retrieving</span>
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>`;
+    return wrap;
+  }
+  // assistant
+  const wrap = el('div', 'fade-up flex items-start gap-3 mb-8');
+  const srcChips = (m.sources || []).map(s => `
+    <span class="inline-flex items-center gap-1.5 h-7 px-2.5 ${colorClasses[s.color]} rounded-md text-xs font-semibold">
+      <span class="w-1.5 h-1.5 ${dotClasses[s.color]} rounded-sm"></span>
+      ${escapeHtml(s.file)} <span class="opacity-60">· p.${s.page}</span>
+    </span>`).join('');
+  wrap.innerHTML = `
+    <span class="w-9 h-9 bg-brand-500 rounded-md grid place-items-center text-paper font-extrabold text-sm shrink-0">A</span>
+    <div class="flex-1 min-w-0 max-w-[88%]">
+      <div class="bg-muted rounded-md px-5 py-4 text-[15px] leading-relaxed whitespace-pre-line">${escapeHtml(m.text)}</div>
+      ${m.sources && m.sources.length ? `
+        <div class="mt-3">
+          <div class="label text-ink/50 mb-2">Sources retrieved</div>
+          <div class="flex flex-wrap gap-2">${srcChips}</div>
+        </div>` : ''}
+      <div class="mt-3 flex items-center gap-1">
+        <button class="btn h-8 w-8 rounded-md hover:bg-muted grid place-items-center text-ink/50 hover:text-ink" title="Copy">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V5a1 1 0 011-1h10"/></svg>
+        </button>
+        <button class="btn h-8 w-8 rounded-md hover:bg-muted grid place-items-center text-ink/50 hover:text-emerald2-500" title="Helpful">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 22V11M2 13v7a2 2 0 002 2h3M14 9V5a3 3 0 00-6 0v6h11a2 2 0 012 2l-2 7a2 2 0 01-2 2h-3"/></svg>
+        </button>
+        <button class="btn h-8 w-8 rounded-md hover:bg-muted grid place-items-center text-ink/50 hover:text-amber2-500" title="Not helpful">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 2v11M22 11V4a2 2 0 00-2-2h-3M10 15v4a3 3 0 006 0v-6H5a2 2 0 01-2-2l2-7a2 2 0 012-2h3"/></svg>
+        </button>
+      </div>
+    </div>`;
+  return wrap;
+}
+
+function escapeHtml(s='') {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderMessages() {
+  const c = $('#messages');
+  c.innerHTML = '';
+  if (state.messages.length === 0) {
+    c.appendChild(emptyState());
+    return;
+  }
+  state.messages.forEach(m => c.appendChild(messageNode(m)));
+  c.scrollTop = c.scrollHeight;
+}
+
+function emptyState() {
+  const w = el('div', 'h-full grid place-items-center');
+  const ready = state.indexed.length > 0;
+  w.innerHTML = `
+    <div class="max-w-2xl text-center">
+      <div class="relative inline-flex">
+        <span class="absolute -top-4 -left-6 w-14 h-14 rounded-full bg-amber2-500"></span>
+        <span class="absolute -bottom-4 -right-6 w-12 h-12 bg-emerald2-500 rounded-md rotate-12"></span>
+        <span class="relative inline-flex w-20 h-20 bg-brand-500 text-paper rounded-md items-center justify-center font-black text-3xl">?</span>
+      </div>
+      <h2 class="mt-10 font-black text-5xl h-tight">${ready ? 'Ask your first question.' : 'Upload PDFs to begin.'}</h2>
+      <p class="mt-4 text-ink/60 text-lg">${ready
+        ? 'Type a question below or pick a suggested prompt. Answers will cite the source PDF + page.'
+        : 'Drop one or more PDFs in the sidebar and hit <span class="font-semibold text-ink">Process PDFs</span>. The chat unlocks once your index is built.'}</p>
+      ${ready ? `
+        <div class="mt-8 flex flex-wrap gap-2 justify-center">
+          <button class="empty-prompt btn h-12 px-5 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">List the top 3 risks</button>
+          <button class="empty-prompt btn h-12 px-5 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">Compare Q3 vs Q2 revenue</button>
+          <button class="empty-prompt btn h-12 px-5 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold">Who signed the auditor's note?</button>
+        </div>` : ''}
+    </div>`;
+  // bind prompts
+  setTimeout(() => {
+    w.querySelectorAll('.empty-prompt').forEach(b => b.addEventListener('click', () => {
+      $('#chat-input').value = b.textContent;
+      $('#chat-form').dispatchEvent(new Event('submit', {cancelable:true, bubbles:true}));
+    }));
+  }, 0);
+  return w;
+}
+
+// ╔══ UPLOAD ══╗
+const dropzone = $('#dropzone');
+const fileInput = $('#file-input');
+fileInput.addEventListener('change', e => addPending([...e.target.files]));
+['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('dropzone-hover'); }));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('dropzone-hover'); }));
+dropzone.addEventListener('drop', e => {
+  const files = [...(e.dataTransfer?.files || [])].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  addPending(files);
+});
+
+function addPending(files) {
+  for (const f of files) {
+    if (state.indexed.find(i => i.name === f.name)) { toast(`${f.name} already indexed — skipped`, 'warn'); continue; }
+    if (state.pending.find(p => p.name === f.name)) { continue; }
+    state.pending.push({ name: f.name, size: f.size });
+  }
+  renderPending();
+}
+
+$('#btn-process').addEventListener('click', async () => {
+  if (state.pending.length === 0) return;
+  const btn = $('#btn-process');
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin inline-block w-4 h-4 border-2 border-paper border-t-transparent rounded-full"></span> Processing…`;
+
+  // simulate per-file work
+  const incoming = [...state.pending];
+  state.pending = [];
+  renderPending();
+  for (const f of incoming) {
+    await new Promise(r => setTimeout(r, 700));
+    const pages = 12 + Math.floor(Math.random() * 50);
+    const chunks = pages * (4 + Math.floor(Math.random() * 3));
+    state.indexed.push({ name: f.name, pages, chunks });
+    renderIndexed();
+  }
+  btn.innerHTML = original;
+  btn.disabled = false;
+  toast(`Indexed ${incoming.length} file${incoming.length===1?'':'s'}`, 'ok');
+  // refresh empty state if needed
+  if (state.messages.length === 0) renderMessages();
+});
+
+// ╔══ CHAT ══╗
+const fakeAnswers = [
+  {
+    text: 'Year over year, revenue grew 14.2% with services outpacing product (+22% vs +9%). Operating margin compressed by 110bps driven by APAC component costs.\n\nGross margin held at 41.6%, roughly flat on a constant-currency basis.',
+    sources: [
+      { file: '10-Q_2024.pdf', page: 7, color: 'brand' },
+      { file: 'annual_report.pdf', page: 22, color: 'emerald2' },
+    ]
+  },
+  {
+    text: 'FX exposure is concentrated in EUR and GBP. The annual report quantifies a 180bps drag on gross margin from EUR weakness and notes a forward-hedge program covering roughly 60% of net EUR exposure through the next two quarters.',
+    sources: [
+      { file: 'annual_report.pdf', page: 33, color: 'emerald2' },
+    ]
+  },
+  {
+    text: 'One renewal cliff is flagged: a top-5 customer contract worth ~$48M ARR is up for renewal in early Q1. The 10-Q characterises the negotiation as "active and constructive" but no signed extension was in place at the report date.',
+    sources: [
+      { file: '10-Q_2024.pdf', page: 19, color: 'brand' },
+    ]
+  },
+  {
+    text: 'I don\'t have enough information in the uploaded documents to answer this confidently. The retrieved chunks didn\'t contain a direct figure or statement — try rephrasing, or upload a related PDF.',
+    sources: []
+  }
+];
+
+$('#chat-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = $('#chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  if (state.indexed.length === 0) {
+    toast('Upload + process PDFs first', 'warn');
+    return;
+  }
+  state.messages.push({ role: 'user', text });
+  input.value = '';
+  renderMessages();
+
+  // thinking
+  state.messages.push({ role: 'thinking' });
+  renderMessages();
+  await new Promise(r => setTimeout(r, 900));
+  state.messages.pop();
+
+  // fake answer
+  const a = fakeAnswers[Math.floor(Math.random() * fakeAnswers.length)];
+  state.messages.push({ role: 'assistant', text: a.text, sources: a.sources });
+  renderMessages();
+});
+
+// suggested prompts
+document.querySelectorAll('.prompt-chip').forEach(b => b.addEventListener('click', () => {
+  $('#chat-input').value = b.textContent;
+  $('#chat-input').focus();
+}));
+
+// clear / reset
+$('#btn-clear').addEventListener('click', () => {
+  state.messages = [];
+  renderMessages();
+  toast('Chat cleared', 'info');
+});
+$('#btn-reset').addEventListener('click', () => {
+  if (!confirm('Reset session? This clears chat AND removes indexed PDFs.')) return;
+  state.messages = [];
+  state.indexed = [];
+  state.pending = [];
+  renderMessages();
+  renderIndexed();
+  renderPending();
+  toast('Session reset', 'warn');
+});
+
+// initial render
+renderIndexed();
+renderPending();
+renderMessages();
+</script>
+</body>
+</html>
