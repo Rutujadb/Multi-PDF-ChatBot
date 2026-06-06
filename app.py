@@ -1,1 +1,388 @@
-# Main Streamlit entry point — implemented in Milestone M6.
+"""Multi-PDF ChatBot - Streamlit entry point.
+
+Renders the web UI and orchestrates the PDF-processing, vector-store, and RAG
+modules. All stateful data lives in ``st.session_state``.
+
+SRS references: FR-UI-01 → FR-UI-07, FR-PDF-01, FR-MEM-01, FR-MEM-03, FR-MEM-04.
+"""
+
+import streamlit as st
+
+from config import EXAMPLE_QUESTIONS, APP_NAME
+from pdf_processor import load_pdfs, split_documents, filter_new_files
+from vector_store import (
+    create_or_update_vector_store,
+    load_existing_vector_store,
+    get_retriever,
+    get_indexed_filenames,
+    get_page_documents,
+    clear_vector_store,
+    delete_file,
+)
+from rag_chain import (
+    get_memory,
+    build_rag_chain,
+    query_chain,
+    answer_from_documents,
+)
+from utils import (
+    validate_pdf_files,
+    format_sources,
+    build_chat_export,
+    parse_page_reference,
+)
+
+USER_AVATAR = "🧑"
+ASSISTANT_AVATAR = "🤖"
+
+st.set_page_config(
+    page_title="Multi-PDF ChatBot",
+    page_icon="📚",
+    layout="wide",
+)
+
+
+def apply_theme(mode: str):
+    """Apply a light/dark colour override via injected CSS.
+
+    "Default" applies nothing, so the app follows the user's Streamlit/browser
+    theme. "Light" and "Dark" override the main and sidebar colours.
+
+    Args:
+        mode: One of ``"Default"``, ``"Light"``, ``"Dark"``.
+    """
+    if mode == "Dark":
+        css = """
+        <style>
+        .stApp { background-color: #0e1117; color: #fafafa; }
+        [data-testid="stSidebar"] { background-color: #1a1d24; }
+        [data-testid="stSidebar"] * { color: #fafafa; }
+        </style>
+        """
+    elif mode == "Light":
+        css = """
+        <style>
+        .stApp { background-color: #ffffff; color: #1a1a1a; }
+        [data-testid="stSidebar"] { background-color: #f3f4f6; }
+        [data-testid="stSidebar"] * { color: #1a1a1a; }
+        </style>
+        """
+    else:
+        css = ""
+
+    base = """
+    <style>
+    .stChatMessage { border-radius: 8px; margin-bottom: 8px; }
+    .stCaption { font-size: 0.8rem; margin-top: 4px; }
+    </style>
+    """
+    st.markdown(base, unsafe_allow_html=True)
+    if css:
+        st.markdown(css, unsafe_allow_html=True)
+
+
+def initialise_session_state():
+    """Initialise all session-state keys, loading any persisted vector store.
+
+    On first load, an existing ChromaDB store (from a previous session) is
+    reloaded from disk so the user does not need to re-upload PDFs.
+    """
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "memory" not in st.session_state:
+        st.session_state.memory = get_memory()
+    if "chain" not in st.session_state:
+        st.session_state.chain = None
+    if "indexed_files" not in st.session_state:
+        st.session_state.indexed_files = []
+    if "pending_question" not in st.session_state:
+        st.session_state.pending_question = None
+    if "uploader_key" not in st.session_state:
+        # Part of the file_uploader's widget key; bumping it forces Streamlit
+        # to render a fresh, empty uploader (used by "Reset All").
+        st.session_state.uploader_key = 0
+    if "vector_store" not in st.session_state:
+        vector_store = load_existing_vector_store()
+        st.session_state.vector_store = vector_store
+        if vector_store is not None:
+            st.session_state.indexed_files = get_indexed_filenames(vector_store)
+            if st.session_state.indexed_files:
+                retriever = get_retriever(vector_store)
+                st.session_state.chain = build_rag_chain(
+                    retriever, st.session_state.memory
+                )
+
+
+def rebuild_chain():
+    """Rebuild the RAG chain from the current vector store, or disable chat.
+
+    If no documents remain indexed, the chain is set to ``None`` so the chat
+    input is disabled.
+    """
+    vector_store = st.session_state.vector_store
+    st.session_state.indexed_files = (
+        get_indexed_filenames(vector_store) if vector_store else []
+    )
+    if st.session_state.indexed_files:
+        retriever = get_retriever(vector_store)
+        st.session_state.chain = build_rag_chain(
+            retriever, st.session_state.memory
+        )
+    else:
+        st.session_state.chain = None
+
+
+def process_uploaded_pdfs(uploaded_files):
+    """Validate, de-duplicate, embed, and index the uploaded PDFs.
+
+    Args:
+        uploaded_files: Files from the sidebar uploader.
+    """
+    valid_files, invalid_files = validate_pdf_files(uploaded_files)
+    new_files, skipped = filter_new_files(
+        valid_files, st.session_state.indexed_files
+    )
+
+    if invalid_files:
+        st.error(f"Invalid files skipped: {', '.join(invalid_files)}")
+    if skipped:
+        st.info(f"{len(skipped)} file(s) already indexed, skipped.")
+
+    if not new_files:
+        st.info("No new PDFs to process.")
+        return
+
+    with st.spinner(f"Processing {len(new_files)} PDF(s)..."):
+        documents, failed = load_pdfs(new_files)
+        if failed:
+            st.warning(f"Could not read (skipped): {', '.join(failed)}")
+        if not documents:
+            st.error("No readable text found in the uploaded PDF(s).")
+            return
+
+        chunks = split_documents(documents)
+        vector_store = create_or_update_vector_store(chunks)
+        st.session_state.vector_store = vector_store
+        rebuild_chain()
+
+    st.success(f"✅ {len(new_files)} PDF(s) processed and indexed!")
+
+
+def remove_file(filename: str):
+    """Remove a single indexed PDF and refresh the chain (FR-MEM, doc mgmt)."""
+    delete_file(st.session_state.vector_store, filename)
+    rebuild_chain()
+
+
+def clear_chat():
+    """Clear the conversation while keeping the indexed PDFs (FR-MEM-03)."""
+    st.session_state.messages = []
+    st.session_state.memory = get_memory()
+    if st.session_state.chain is not None:
+        st.session_state.chain.memory = st.session_state.memory
+
+
+def reset_session():
+    """Clear chat history and the indexed knowledge base (FR-MEM-04)."""
+    clear_vector_store(st.session_state.get("vector_store"))
+    st.session_state.messages = []
+    st.session_state.memory = get_memory()
+    st.session_state.chain = None
+    st.session_state.vector_store = None
+    st.session_state.indexed_files = []
+    # Bump the uploader key so the file_uploader is re-created empty.
+    st.session_state.uploader_key += 1
+
+
+def render_sidebar():
+    """Render the sidebar: uploader, process button, indexed list, controls."""
+    with st.sidebar:
+        st.title("📚 Multi-PDF ChatBot")
+        st.markdown("---")
+
+        uploaded_files = st.file_uploader(
+            "Upload PDF files",
+            type=["pdf"],
+            accept_multiple_files=True,
+            help="Upload one or more PDF files to chat with",
+            key=f"uploader_{st.session_state.uploader_key}",
+        )
+
+        if st.button("⚡ Process PDFs", use_container_width=True):
+            if not uploaded_files:
+                st.warning("Please upload at least one PDF file first.")
+            else:
+                process_uploaded_pdfs(uploaded_files)
+
+        if st.session_state.indexed_files:
+            st.markdown("---")
+            count = len(st.session_state.indexed_files)
+            st.markdown(f"**Indexed Documents ({count}):**")
+            for filename in st.session_state.indexed_files:
+                col_name, col_del = st.columns([5, 1])
+                col_name.markdown(f"✅ {filename}")
+                if col_del.button("🗑", key=f"del_{filename}",
+                                  help=f"Remove {filename}"):
+                    remove_file(filename)
+                    st.rerun()
+
+        if st.session_state.messages:
+            st.markdown("---")
+            st.markdown("**Export conversation:**")
+            col_md, col_txt = st.columns(2)
+            col_md.download_button(
+                "⬇ .md",
+                data=build_chat_export(st.session_state.messages, "md"),
+                file_name="chat_history.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+            col_txt.download_button(
+                "⬇ .txt",
+                data=build_chat_export(st.session_state.messages, "txt"),
+                file_name="chat_history.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🗑 Clear Chat", use_container_width=True):
+                clear_chat()
+                st.rerun()
+        with col2:
+            if st.button("🔄 Reset All", use_container_width=True):
+                reset_session()
+                st.rerun()
+
+
+def render_header():
+    """Render the page title and the top-right theme selector."""
+    col_title, col_theme = st.columns([5, 1])
+    with col_theme:
+        mode = st.selectbox(
+            "Theme",
+            ["Default", "Light", "Dark"],
+            key="theme_mode",
+            label_visibility="collapsed",
+        )
+    apply_theme(mode)
+    with col_title:
+        st.title("💬 Chat with your PDFs")
+        st.caption("Ask questions across all of your uploaded PDFs.")
+
+
+def render_starter_questions():
+    """Show clickable example questions before any conversation has started."""
+    st.markdown("**Try asking:**")
+    cols = st.columns(len(EXAMPLE_QUESTIONS))
+    for col, question in zip(cols, EXAMPLE_QUESTIONS):
+        if col.button(question, use_container_width=True):
+            st.session_state.pending_question = question
+            st.rerun()
+
+
+def handle_question(prompt: str):
+    """Run a question through the RAG chain and render the exchange."""
+    with st.chat_message("user", avatar=USER_AVATAR):
+        st.markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
+        with st.spinner("Searching your documents..."):
+            result = answer_prompt(prompt)
+            answer = result["answer"]
+            sources = format_sources(result["source_documents"])
+        st.markdown(answer)
+        if sources:
+            st.caption(sources)
+
+    st.session_state.messages.append(
+        {"role": "assistant", "content": answer, "sources": sources}
+    )
+
+
+def answer_prompt(prompt: str) -> dict:
+    """Route a question to page-targeted retrieval or the normal RAG chain.
+
+    If the question references a specific page of an indexed PDF, the exact
+    chunks for that page are fetched by metadata and answered directly;
+    otherwise the conversational retrieval chain handles it. Page answers are
+    also written to memory so follow-up questions stay context-aware.
+
+    Args:
+        prompt: The user's question.
+
+    Returns:
+        Dict with ``answer`` and ``source_documents``.
+    """
+    ref_file, ref_page = parse_page_reference(
+        prompt, st.session_state.indexed_files
+    )
+    if ref_file and ref_page:
+        page_docs = get_page_documents(
+            st.session_state.vector_store, ref_file, ref_page
+        )
+        if page_docs:
+            result = answer_from_documents(prompt, page_docs)
+            try:
+                st.session_state.memory.save_context(
+                    {"question": prompt}, {"answer": result["answer"]}
+                )
+            except Exception:
+                pass
+            return result
+        # No text on that page → fall through to normal retrieval.
+
+    return query_chain(st.session_state.chain, prompt)
+
+
+def render_chat():
+    """Render the main chat area: history, empty state, input, and footer."""
+    if not st.session_state.indexed_files:
+        st.info(
+            "👈 Upload PDF files in the sidebar and click "
+            "'Process PDFs' to get started."
+        )
+
+    for message in st.session_state.messages:
+        avatar = USER_AVATAR if message["role"] == "user" else ASSISTANT_AVATAR
+        with st.chat_message(message["role"], avatar=avatar):
+            st.markdown(message["content"])
+            if message.get("sources"):
+                st.caption(message["sources"])
+
+    chat_disabled = st.session_state.chain is None
+
+    # Starter questions: only when PDFs are ready and no chat has begun.
+    if not chat_disabled and not st.session_state.messages:
+        render_starter_questions()
+
+    typed = st.chat_input(
+        "Ask a question about your PDFs..."
+        if not chat_disabled
+        else "Upload and process PDFs first...",
+        disabled=chat_disabled,
+    )
+
+    # A question can come from the input box or from a starter-question click.
+    prompt = typed or st.session_state.pending_question
+    st.session_state.pending_question = None
+    if prompt:
+        handle_question(prompt)
+
+    st.markdown("---")
+    st.caption(f"🤖 {APP_NAME}")
+
+
+def main():
+    """Application entry point."""
+    initialise_session_state()
+    render_sidebar()
+    render_header()
+    render_chat()
+
+
+if __name__ == "__main__":
+    main()

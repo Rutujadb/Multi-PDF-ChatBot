@@ -11,7 +11,7 @@ are grounded strictly in your uploaded documents and include source citations.
 - Upload one or more PDF files into a shared knowledge base
 - Ask natural-language questions answered from the PDF content
 - See which PDF each answer came from (source citation)
-- Hold a context-aware conversation — follow-up questions understand prior turns
+- Hold a context-aware conversation - follow-up questions understand prior turns
 - Clear the chat or reset the whole session at any time
 
 ## Tech Stack
@@ -29,7 +29,7 @@ are grounded strictly in your uploaded documents and include source citations.
 ## Prerequisites
 
 - Python 3.10 or higher
-- A free Google AI Studio API key — get one at https://aistudio.google.com
+- A free Google AI Studio API key - get one at https://aistudio.google.com
 - Internet connection (for LLM calls and the one-time embedding-model download ~90 MB)
 
 ## Installation
@@ -71,7 +71,7 @@ To use OpenRouter instead of Gemini, set `LLM_PROVIDER=openrouter` and add your
 `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`. To use Pinecone instead of ChromaDB,
 set `VECTOR_STORE=pinecone` and add your Pinecone credentials.
 
-> **Never commit `.env`** — it is git-ignored. Only `.env.example` is committed.
+> **Never commit `.env`** - it is git-ignored. Only `.env.example` is committed.
 
 ## Running the app
 
@@ -84,10 +84,10 @@ The app opens in your browser at `http://localhost:8501`.
 ## How to use
 
 1. In the sidebar, click **Browse files** and select one or more PDFs.
-2. Click **⚡ Process PDFs** — wait for the success message.
+2. Click **⚡ Process PDFs** - wait for the success message.
 3. Type a question in the chat box at the bottom and press Enter.
 4. Read the answer; the source PDF name appears beneath each response.
-5. Ask follow-up questions — the bot remembers the conversation.
+5. Ask follow-up questions - the bot remembers the conversation.
 6. Use **🗑 Clear Chat** to reset the conversation (keeps your indexed PDFs) or
    **🔄 Reset All** to start over completely.
 
@@ -111,8 +111,8 @@ multi-pdf-chatbot/
 
 ## Known limitations
 
-- **Single-user / localhost** — not designed for concurrent multi-user access.
-- **Text-based PDFs only** — scanned image-only PDFs are not supported (no OCR).
-- **Chat history is session-scoped** — it is lost on a browser refresh (the
+- **Single-user / localhost** - not designed for concurrent multi-user access.
+- **Text-based PDFs only** - scanned image-only PDFs are not supported (no OCR).
+- **Chat history is session-scoped** - it is lost on a browser refresh (the
   indexed vector store on disk, however, persists across restarts).
 - **Gemini free-tier rate limits** apply (e.g. requests/minute and tokens/day).

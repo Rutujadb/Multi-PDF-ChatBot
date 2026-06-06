@@ -8,7 +8,9 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
 # --- Retrieval ---
-TOP_K_RESULTS = 4
+# Number of chunks fetched per query. Higher gives broad/summary questions
+# ("what topics are covered?") more context to synthesise from.
+TOP_K_RESULTS = 6
 
 # --- ChromaDB ---
 CHROMA_PERSIST_DIR = "./chroma_db"
@@ -34,9 +36,12 @@ PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "multi-pdf-chatbot")
 
 # --- Prompt template ---
 SYSTEM_PROMPT_TEMPLATE = """You are a helpful assistant that answers questions
-based strictly on the provided document context. If the answer is not in the
-context, say "I don't have enough information in the uploaded documents to
-answer this." Do not use any external knowledge.
+about the user's uploaded PDF documents. Base your answer only on the provided
+context below. You may summarise and synthesise across the context - for
+example, to describe the topics, themes, or main points covered. Only if the
+context contains nothing relevant to the question, reply exactly: "I don't have
+enough information in the uploaded documents to answer this." Do not use any
+outside knowledge.
 
 Context:
 {context}
@@ -46,3 +51,13 @@ Chat History:
 
 Question: {question}
 Answer:"""
+
+# --- UI: starter/example questions shown when no chat has begun yet ---
+EXAMPLE_QUESTIONS = [
+    "Summarise the uploaded documents.",
+    "What are the key points?",
+    "What topics are covered?",
+]
+
+# --- UI: app display name (shown in the footer) ---
+APP_NAME = "Multi-PDF ChatBot"
