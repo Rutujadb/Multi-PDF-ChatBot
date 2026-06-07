@@ -14,7 +14,7 @@ const features = [
     bg: 'bg-emerald2-50 hover:bg-emerald2-100',
     stroke: '#10B981',
     title: 'Semantic retrieval',
-    text: 'Cosine-similarity search over ChromaDB returns the top chunks — across every file, not just one.',
+    text: 'Cosine-similarity search over ChromaDB returns the top chunks - across every file, not just one.',
     tag: 'FR-VS-01 → 03',
     tagClass: 'text-emerald2-600',
   },
@@ -38,7 +38,7 @@ const features = [
     bg: 'bg-brand-50 hover:bg-brand-100',
     stroke: '#3B82F6',
     title: 'Persistent store',
-    text: 'ChromaDB writes to disk. Restart the app and your index is still there — no re-upload needed.',
+    text: 'ChromaDB writes to disk. Restart the app and your index is still there - no re-upload needed.',
     tag: 'FR-VS-02',
     tagClass: 'text-brand-600',
   },
@@ -60,15 +60,15 @@ const faqs = [
   },
   {
     q: 'What happens when I refresh the browser?',
-    a: 'Chat history is session-scoped and will reset. Your indexed PDFs persist — ChromaDB writes to ./chroma_db/ so they\'re loaded automatically on next start.',
+    a: 'Chat history is session-scoped and will reset. Your indexed PDFs persist - ChromaDB writes to ./chroma_db/ so they\'re loaded automatically on next start.',
   },
   {
     q: 'Will it work with scanned PDFs?',
-    a: 'Not currently. The pipeline expects selectable text. Image-only PDFs are detected on upload and skipped with a clear warning — OCR is on the roadmap.',
+    a: 'Not currently. The pipeline expects selectable text. Image-only PDFs are detected on upload and skipped with a clear warning - OCR is on the roadmap.',
   },
   {
     q: 'How do I swap to Pinecone?',
-    a: 'Set VECTOR_STORE=pinecone in your .env, plus index name + API key. Core logic doesn\'t change — that\'s the maintainability requirement from the SRS.',
+    a: 'Set VECTOR_STORE=pinecone in your .env, plus index name + API key. Core logic doesn\'t change - that\'s the maintainability requirement from the SRS.',
   },
 ]
 
@@ -118,7 +118,7 @@ export default function Landing() {
               <span className="bg-ink text-paper px-3 inline-block rounded-md">PDFs.</span>
             </h1>
             <p className="mt-8 max-w-xl text-lg font-medium text-paper/90 leading-relaxed">
-              Drop in a stack of documents. Ask anything. Get grounded answers with citations — powered by a local vector store and a free-tier LLM.
+              Drop in a stack of documents. Ask anything. Get grounded answers with citations - powered by a local vector store and a free-tier LLM.
             </p>
             <div className="mt-10 flex flex-wrap gap-3">
               <Link to="/dashboard" className="inline-flex h-16 px-8 items-center rounded-md bg-paper text-ink font-bold text-lg btn-primary">
@@ -216,7 +216,7 @@ export default function Landing() {
               </div>
               <h3 className="relative mt-6 font-extrabold text-3xl h-tight">Drop a PDF.<br />We chunk + embed.</h3>
               <ul className="relative mt-8 space-y-3 text-[15px]">
-                {['PyPDFLoader reads each page in order.', 'RecursiveCharacterTextSplitter — 500 char chunks, 50 char overlap.', 'all-MiniLM-L6-v2 generates 384-dim vectors locally.', 'Written to ChromaDB with source + page metadata.'].map((item) => (
+                {['PyPDFLoader reads each page in order.', 'RecursiveCharacterTextSplitter - 500 char chunks, 50 char overlap.', 'all-MiniLM-L6-v2 generates 384-dim vectors locally.', 'Written to ChromaDB with source + page metadata.'].map((item) => (
                   <li key={item} className="flex items-start gap-3">
                     <span className="mt-1.5 w-2 h-2 bg-brand-500 rounded-sm shrink-0" />
                     <span>{item}</span>
@@ -249,9 +249,9 @@ export default function Landing() {
           <div className="grid lg:grid-cols-3 gap-6 items-end">
             <div className="lg:col-span-2">
               <div className="label text-ink/60">Capabilities</div>
-              <h2 className="mt-3 h-display font-black text-6xl lg:text-7xl">Everything the<br />SRS asks for.</h2>
+              <h2 className="mt-3 h-display font-black text-6xl lg:text-7xl">Everything the<br />User asks for.</h2>
             </div>
-            <p className="text-ink/70 text-lg">Six functional pillars — built from open-source pieces, no paid infra required.</p>
+            <p className="text-ink/70 text-lg">Six functional pillars - built from open-source pieces, no paid infra required.</p>
           </div>
           <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {features.map((f) => (
@@ -276,7 +276,7 @@ export default function Landing() {
             <div className="label text-paper/70">The stack</div>
             <h2 className="mt-3 h-display font-black text-6xl lg:text-7xl">Free<br />tier,<br />real<br />RAG.</h2>
             <p className="mt-6 text-paper/90 text-lg max-w-md">
-              Production-grade patterns with zero billing surprises. React + Tailwind UI with a FastAPI backend — Streamlit classic UI still available.
+              Production-grade patterns with zero billing surprises. React + Tailwind UI with a FastAPI backend - Streamlit classic UI still available.
             </p>
           </div>
           <div className="lg:col-span-7 grid sm:grid-cols-2 gap-4">

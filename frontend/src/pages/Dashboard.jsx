@@ -154,7 +154,7 @@ export default function Dashboard() {
       const next = [...prev]
       pdfs.forEach((file) => {
         if (indexedFiles.some((f) => f.name === file.name)) {
-          pushToast(`${file.name} already indexed — skipped`, 'warn')
+          pushToast(`${file.name} already indexed - skipped`, 'warn')
           return
         }
         if (!next.some((p) => p.name === file.name)) next.push(file)

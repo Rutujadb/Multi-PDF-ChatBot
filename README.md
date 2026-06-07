@@ -76,7 +76,7 @@ set `VECTOR_STORE=pinecone` and add your Pinecone credentials.
 
 ## Running the app
 
-### React UI (recommended — matches the design)
+### React UI (recommended - matches the design)
 
 Install Python and frontend dependencies, then start the dev stack:
 
