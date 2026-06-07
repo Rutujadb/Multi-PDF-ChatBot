@@ -15,6 +15,7 @@ import streamlit.components.v1 as components
 from pdf_storage import get_pdf_path
 
 _PDF_PANEL_CACHE: dict[tuple, tuple[str, str, str, str]] = {}
+_PREVIEW_ZOOM = 2.0
 
 PANEL_STYLE = """
 #mpdf-source-panel {
@@ -87,11 +88,18 @@ PANEL_STYLE = """
 }
 #mpdf-source-panel .mpdf-body embed,
 #mpdf-source-panel .mpdf-body object,
-#mpdf-source-panel .mpdf-body iframe {
+#mpdf-source-panel .mpdf-body iframe,
+#mpdf-source-panel .mpdf-body img {
   display: block;
   width: 100% !important;
-  height: 100% !important;
+  height: auto !important;
   border: none !important;
+  background: #ffffff;
+}
+#mpdf-source-panel .mpdf-preview-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
   background: #ffffff;
 }
 #mpdf-source-panel .mpdf-legend {
@@ -271,8 +279,49 @@ def build_highlighted_page_pdf(
         return None
 
 
-def _prepare_panel_pdf(source_item: Dict[str, Any]) -> tuple[str, str, str, str]:
-    """Build base64 PDF data and escaped labels for the viewer panel."""
+def _pdf_bytes_to_png(pdf_bytes: bytes, zoom: float = _PREVIEW_ZOOM) -> Optional[bytes]:
+    """Rasterize the first page of a single-page PDF to PNG bytes."""
+    try:
+        import fitz
+    except ImportError:
+        return None
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if doc.page_count == 0:
+            doc.close()
+            return None
+        page = doc[0]
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        png_bytes = pix.tobytes("png")
+        doc.close()
+        return png_bytes
+    except Exception:
+        return None
+
+
+def build_highlighted_page_png(
+    pdf_path: Path,
+    page_num: int,
+    excerpt: str,
+    line_num: Optional[int] = None,
+    highlight_phrases: Optional[List[str]] = None,
+) -> Optional[bytes]:
+    """Return PNG bytes of a highlighted PDF page for browser preview."""
+    pdf_bytes = build_highlighted_page_pdf(
+        pdf_path,
+        page_num,
+        excerpt,
+        line_num=line_num,
+        highlight_phrases=highlight_phrases,
+    )
+    if not pdf_bytes:
+        return None
+    return _pdf_bytes_to_png(pdf_bytes)
+
+
+def _prepare_panel_preview(source_item: Dict[str, Any]) -> tuple[str, str, str, str]:
+    """Build base64 PNG preview data and escaped labels for the viewer panel."""
     filename = source_item.get("file", "Unknown")
     page = source_item.get("page", "?")
     label = source_item.get("label") or f"{filename} - p.{page}"
@@ -298,6 +347,59 @@ def _prepare_panel_pdf(source_item: Dict[str, Any]) -> tuple[str, str, str, str]
     if cache_key in _PDF_PANEL_CACHE:
         return _PDF_PANEL_CACHE[cache_key]
 
+    png_bytes = build_highlighted_page_png(
+        pdf_path,
+        page,
+        excerpt,
+        line_num=line_num,
+        highlight_phrases=highlight_phrases,
+    )
+    if not png_bytes:
+        try:
+            import fitz
+
+            doc = fitz.open(pdf_path)
+            page_idx = max(0, min(int(page) - 1, len(doc) - 1))
+            single = fitz.open()
+            single.insert_pdf(doc, from_page=page_idx, to_page=page_idx)
+            fallback_pdf = single.tobytes()
+            single.close()
+            doc.close()
+            png_bytes = _pdf_bytes_to_png(fallback_pdf)
+        except Exception:
+            png_bytes = None
+
+    if not png_bytes:
+        return "", html.escape(str(filename)), html.escape(str(label)), html.escape(
+            excerpt[:240]
+        )
+
+    png_b64 = base64.b64encode(png_bytes).decode("ascii")
+    result = (
+        png_b64,
+        html.escape(str(filename)),
+        html.escape(str(label)),
+        html.escape(excerpt[:240]),
+    )
+    _PDF_PANEL_CACHE[cache_key] = result
+    return result
+
+
+def _prepare_panel_pdf(source_item: Dict[str, Any]) -> tuple[str, str, str, str]:
+    """Build base64 PDF data for optional download (not used for display)."""
+    filename = source_item.get("file", "Unknown")
+    page = source_item.get("page", "?")
+    label = source_item.get("label") or f"{filename} - p.{page}"
+    excerpt = source_item.get("excerpt", "")
+    line_num = source_item.get("line")
+    highlight_phrases = source_item.get("highlight_phrases") or []
+
+    pdf_path = get_pdf_path(filename)
+    if pdf_path is None:
+        return "", html.escape(str(filename)), html.escape(str(label)), html.escape(
+            excerpt[:240]
+        )
+
     pdf_bytes = build_highlighted_page_pdf(
         pdf_path,
         page,
@@ -309,18 +411,24 @@ def _prepare_panel_pdf(source_item: Dict[str, Any]) -> tuple[str, str, str, str]
         pdf_bytes = pdf_path.read_bytes()
 
     pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
-    result = (
+    return (
         pdf_b64,
         html.escape(str(filename)),
         html.escape(str(label)),
         html.escape(excerpt[:240]),
     )
-    _PDF_PANEL_CACHE[cache_key] = result
-    return result
+
+
+def _png_bytes_for_item(source_item: Dict[str, Any]) -> Optional[bytes]:
+    """Return highlighted page PNG bytes for a source item."""
+    png_b64, _, _, _ = _prepare_panel_preview(source_item)
+    if png_b64:
+        return base64.b64decode(png_b64)
+    return None
 
 
 def _pdf_bytes_for_item(source_item: Dict[str, Any]) -> Optional[bytes]:
-    """Return highlighted (or raw) PDF bytes for a source item."""
+    """Return highlighted PDF bytes for optional download."""
     pdf_b64, _, _, _ = _prepare_panel_pdf(source_item)
     if pdf_b64:
         return base64.b64decode(pdf_b64)
@@ -331,36 +439,15 @@ def _pdf_bytes_for_item(source_item: Dict[str, Any]) -> Optional[bytes]:
 
 
 def _use_native_pdf_viewer() -> bool:
-    """Use Streamlit's built-in PDF viewer (required on Streamlit Cloud).
+    """Use Streamlit dialog preview instead of the JS slide-in panel.
 
-    Blob/data-URI PDF embeds inside ``components.html`` iframes are blocked or
-    fail cross-document on Streamlit Community Cloud, so we use ``st.pdf`` there.
-    Set env ``USE_NATIVE_PDF_VIEWER=true`` to force the dialog on any host.
+    The dialog renders a PNG via ``st.image`` because Chrome blocks nested PDF
+    iframes (including ``st.pdf``) on Streamlit Community Cloud.
     """
     override = os.getenv("USE_NATIVE_PDF_VIEWER", "auto").strip().lower()
-    if override in {"1", "true", "yes", "on"}:
-        return True
     if override in {"0", "false", "no", "off"}:
         return False
-
-    env = os.environ
-    if env.get("STREAMLIT_RUNTIME_ENV", "").lower() == "cloud":
-        return True
-    if env.get("STREAMLIT_SHARING"):
-        return True
-    host = " ".join(
-        str(env.get(key, "")) for key in ("HOSTNAME", "STREAMLIT_SERVER_ADDRESS")
-    ).lower()
-    if "streamlit.app" in host:
-        return True
-    try:
-        import socket
-
-        if "streamlit.app" in socket.getfqdn().lower():
-            return True
-    except OSError:
-        pass
-    return False
+    return True
 
 
 def _show_native_pdf_dialog(item: Dict[str, Any]) -> None:
@@ -370,7 +457,7 @@ def _show_native_pdf_dialog(item: Dict[str, Any]) -> None:
 
 @st.dialog("Source document", width="large")
 def _native_pdf_dialog(item: Dict[str, Any]) -> None:
-    """Render highlighted PDF bytes inside a Streamlit Cloud-safe dialog."""
+    """Render a highlighted page PNG inside a Chrome-safe Streamlit dialog."""
     label = item.get("label") or item.get("file", "Source")
     excerpt = (item.get("excerpt") or "").strip()
 
@@ -378,14 +465,23 @@ def _native_pdf_dialog(item: Dict[str, Any]) -> None:
     if excerpt:
         st.caption(f"Highlighted passage: {excerpt[:280]}")
 
+    png_bytes = _png_bytes_for_item(item)
     pdf_bytes = _pdf_bytes_for_item(item)
-    if not pdf_bytes:
+    if not png_bytes:
         st.warning(
             "The original PDF file is not on disk. Re-upload and process it "
             "to enable preview."
         )
     else:
-        st.pdf(pdf_bytes, height=720)
+        st.image(png_bytes, use_container_width=True)
+        if pdf_bytes:
+            st.download_button(
+                "Download highlighted page (PDF)",
+                data=pdf_bytes,
+                file_name=f"{item.get('file', 'source')}-p{item.get('page', 1)}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
     if st.button("Close preview", use_container_width=True, key="mpdf_close"):
         dismiss_pdf_viewer()
@@ -393,7 +489,7 @@ def _native_pdf_dialog(item: Dict[str, Any]) -> None:
 
 
 def _mount_panel_script(
-    pdf_b64: str,
+    png_b64: str,
     safe_filename: str,
     safe_label: str,
     safe_excerpt: str,
@@ -424,7 +520,7 @@ def _mount_panel_script(
             {html.escape(missing_message)}
           </div>
         """
-        pdf_b64_json = json.dumps("")
+        png_b64_json = json.dumps("")
     else:
         body_html = f"""
           <div class="mpdf-header">
@@ -435,12 +531,14 @@ def _mount_panel_script(
             <button class="mpdf-close" id="mpdf-close-btn" type="button">Close</button>
           </div>
           <div class="mpdf-body">
-            <div id="mpdf-loading" style="position:absolute;inset:0;display:grid;place-items:center;background:#f3f4f6;color:#4b5563;font-size:14px;font-weight:600;z-index:1;">Loading PDF…</div>
-            <iframe id="mpdf-pdf-embed-{panel_token}" title="Source PDF" width="100%" height="100%"></iframe>
+            <div id="mpdf-loading" style="position:absolute;inset:0;display:grid;place-items:center;background:#f3f4f6;color:#4b5563;font-size:14px;font-weight:600;z-index:1;">Loading preview…</div>
+            <div class="mpdf-preview-scroll">
+              <img id="mpdf-preview-img-{panel_token}" alt="Source page preview" />
+            </div>
           </div>
           <div class="mpdf-legend">Highlighted passage: {safe_excerpt or "Opened at cited page."}</div>
         """
-        pdf_b64_json = json.dumps(pdf_b64)
+        png_b64_json = json.dumps(png_b64)
 
     return f"""
 <!DOCTYPE html>
@@ -451,7 +549,7 @@ def _mount_panel_script(
   const parentDoc = parentWin.document;
   const panelToken = {panel_token_json};
   const sourceKey = {source_key_json};
-  const pdfB64 = {pdf_b64_json};
+  const pngB64 = {png_b64_json};
 
   const existing = parentDoc.getElementById("mpdf-source-panel");
   if (
@@ -490,28 +588,26 @@ def _mount_panel_script(
   const appView = parentDoc.querySelector('[data-testid="stAppViewContainer"]');
   if (appView) appView.style.marginRight = "50vw";
 
-  function attachPdf() {{
-    if (!pdfB64) return;
-    const viewer = parentDoc.getElementById("mpdf-pdf-embed-" + panelToken);
+  function attachPreview() {{
+    if (!pngB64) return;
+    const img = parentDoc.getElementById("mpdf-preview-img-" + panelToken);
     const loading = parentDoc.getElementById("mpdf-loading");
-    if (!viewer) return;
+    if (!img) return;
 
     function hideLoading() {{
       if (loading) loading.style.display = "none";
     }}
 
-    viewer.onload = hideLoading;
-    viewer.onerror = hideLoading;
-
-    // Data URI works reliably when the panel is mounted on the parent document.
-    viewer.src = "data:application/pdf;base64," + pdfB64;
+    img.onload = hideLoading;
+    img.onerror = hideLoading;
+    img.src = "data:image/png;base64," + pngB64;
     parentWin.__mpdfPanelToken = panelToken;
     setTimeout(hideLoading, 1500);
   }}
 
   requestAnimationFrame(function () {{
     panel.classList.add("mpdf-open");
-    attachPdf();
+    attachPreview();
   }});
 
   function closePanel() {{
@@ -592,15 +688,17 @@ def request_pdf_viewer(item: Dict[str, Any]) -> None:
 
 
 def _build_payload_dict(source_item: Dict[str, Any]) -> Dict[str, Any]:
-    """Prepare HTML-safe PDF panel payload for the viewer iframe."""
-    pdf_b64, safe_filename, safe_label, safe_excerpt = _prepare_panel_pdf(source_item)
-    missing_pdf = not pdf_b64 and get_pdf_path(source_item.get("file", "")) is None
+    """Prepare HTML-safe PNG panel payload for the viewer iframe."""
+    png_b64, safe_filename, safe_label, safe_excerpt = _prepare_panel_preview(
+        source_item
+    )
+    missing_pdf = not png_b64 and get_pdf_path(source_item.get("file", "")) is None
     source_key = (
         f"{source_item.get('file')}|{source_item.get('page')}|"
         f"{source_item.get('line')}|{source_item.get('excerpt', '')[:80]}"
     )
     return {
-        "pdf_b64": pdf_b64,
+        "png_b64": png_b64,
         "safe_filename": safe_filename,
         "safe_label": safe_label,
         "safe_excerpt": safe_excerpt,
@@ -664,7 +762,7 @@ def render_pdf_viewer_modal() -> None:
             return
 
         mount_html = _mount_panel_script(
-            payload["pdf_b64"],
+            payload["png_b64"],
             payload["safe_filename"],
             payload["safe_label"],
             payload["safe_excerpt"],
