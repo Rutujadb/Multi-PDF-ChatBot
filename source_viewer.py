@@ -5,9 +5,11 @@ from __future__ import annotations
 import base64
 import html
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import streamlit as st
 import streamlit.components.v1 as components
 
 from pdf_storage import get_pdf_path
@@ -317,6 +319,79 @@ def _prepare_panel_pdf(source_item: Dict[str, Any]) -> tuple[str, str, str, str]
     return result
 
 
+def _pdf_bytes_for_item(source_item: Dict[str, Any]) -> Optional[bytes]:
+    """Return highlighted (or raw) PDF bytes for a source item."""
+    pdf_b64, _, _, _ = _prepare_panel_pdf(source_item)
+    if pdf_b64:
+        return base64.b64decode(pdf_b64)
+    pdf_path = get_pdf_path(source_item.get("file", ""))
+    if pdf_path is not None:
+        return pdf_path.read_bytes()
+    return None
+
+
+def _use_native_pdf_viewer() -> bool:
+    """Use Streamlit's built-in PDF viewer (required on Streamlit Cloud).
+
+    Blob/data-URI PDF embeds inside ``components.html`` iframes are blocked or
+    fail cross-document on Streamlit Community Cloud, so we use ``st.pdf`` there.
+    Set env ``USE_NATIVE_PDF_VIEWER=true`` to force the dialog on any host.
+    """
+    override = os.getenv("USE_NATIVE_PDF_VIEWER", "auto").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+
+    env = os.environ
+    if env.get("STREAMLIT_RUNTIME_ENV", "").lower() == "cloud":
+        return True
+    if env.get("STREAMLIT_SHARING"):
+        return True
+    host = " ".join(
+        str(env.get(key, "")) for key in ("HOSTNAME", "STREAMLIT_SERVER_ADDRESS")
+    ).lower()
+    if "streamlit.app" in host:
+        return True
+    try:
+        import socket
+
+        if "streamlit.app" in socket.getfqdn().lower():
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _show_native_pdf_dialog(item: Dict[str, Any]) -> None:
+    """Open the module-level Streamlit dialog for the cited PDF page."""
+    _native_pdf_dialog(item)
+
+
+@st.dialog("Source document", width="large")
+def _native_pdf_dialog(item: Dict[str, Any]) -> None:
+    """Render highlighted PDF bytes inside a Streamlit Cloud-safe dialog."""
+    label = item.get("label") or item.get("file", "Source")
+    excerpt = (item.get("excerpt") or "").strip()
+
+    st.markdown(f"**{label}**")
+    if excerpt:
+        st.caption(f"Highlighted passage: {excerpt[:280]}")
+
+    pdf_bytes = _pdf_bytes_for_item(item)
+    if not pdf_bytes:
+        st.warning(
+            "The original PDF file is not on disk. Re-upload and process it "
+            "to enable preview."
+        )
+    else:
+        st.pdf(pdf_bytes, height=720)
+
+    if st.button("Close preview", use_container_width=True, key="mpdf_close"):
+        dismiss_pdf_viewer()
+        st.rerun()
+
+
 def _mount_panel_script(
     pdf_b64: str,
     safe_filename: str,
@@ -360,8 +435,8 @@ def _mount_panel_script(
             <button class="mpdf-close" id="mpdf-close-btn" type="button">Close</button>
           </div>
           <div class="mpdf-body">
-            <div id="mpdf-loading" style="position:absolute;inset:0;display:grid;place-items:center;background:#f3f4f6;color:#4b5563;font-size:14px;font-weight:600;">Loading PDF…</div>
-            <embed id="mpdf-pdf-embed-{panel_token}" type="application/pdf" width="100%" height="100%" />
+            <div id="mpdf-loading" style="position:absolute;inset:0;display:grid;place-items:center;background:#f3f4f6;color:#4b5563;font-size:14px;font-weight:600;z-index:1;">Loading PDF…</div>
+            <iframe id="mpdf-pdf-embed-{panel_token}" title="Source PDF" width="100%" height="100%"></iframe>
           </div>
           <div class="mpdf-legend">Highlighted passage: {safe_excerpt or "Opened at cited page."}</div>
         """
@@ -417,27 +492,21 @@ def _mount_panel_script(
 
   function attachPdf() {{
     if (!pdfB64) return;
-    const embed = parentDoc.getElementById("mpdf-pdf-embed-" + panelToken);
+    const viewer = parentDoc.getElementById("mpdf-pdf-embed-" + panelToken);
     const loading = parentDoc.getElementById("mpdf-loading");
-    if (!embed) return;
+    if (!viewer) return;
 
-    const binary = atob(pdfB64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {{
-      bytes[i] = binary.charCodeAt(i);
+    function hideLoading() {{
+      if (loading) loading.style.display = "none";
     }}
-    const blob = new Blob([bytes], {{ type: "application/pdf" }});
-    revokeBlobUrl();
-    const blobUrl = URL.createObjectURL(blob);
-    parentWin.__mpdfBlobUrl = blobUrl;
+
+    viewer.onload = hideLoading;
+    viewer.onerror = hideLoading;
+
+    // Data URI works reliably when the panel is mounted on the parent document.
+    viewer.src = "data:application/pdf;base64," + pdfB64;
     parentWin.__mpdfPanelToken = panelToken;
-    embed.src = blobUrl;
-    embed.onload = function () {{
-      if (loading) loading.style.display = "none";
-    }};
-    setTimeout(function () {{
-      if (loading) loading.style.display = "none";
-    }}, 1200);
+    setTimeout(hideLoading, 1500);
   }}
 
   requestAnimationFrame(function () {{
@@ -568,14 +637,17 @@ def render_pdf_viewer_modal() -> None:
     item = st.session_state.get("pdf_viewer_item")
 
     if stage == "cleanup":
-        components.html(_cleanup_panel_script(), height=1, scrolling=False)
+        if not _use_native_pdf_viewer():
+            components.html(_cleanup_panel_script(), height=1, scrolling=False)
         st.session_state.pdf_viewer_stage = "mount"
         st.rerun()
         return
 
     if not item:
-        if stage != "idle":
+        if stage != "idle" and not _use_native_pdf_viewer():
             components.html(_cleanup_panel_script(), height=0, scrolling=False)
+            st.session_state.pdf_viewer_stage = "idle"
+        elif stage != "idle":
             st.session_state.pdf_viewer_stage = "idle"
         return
 
@@ -586,6 +658,11 @@ def render_pdf_viewer_modal() -> None:
         st.session_state.pdf_viewer_payload = payload
 
     if stage in ("mount", "open"):
+        if _use_native_pdf_viewer():
+            _show_native_pdf_dialog(item)
+            st.session_state.pdf_viewer_stage = "open"
+            return
+
         mount_html = _mount_panel_script(
             payload["pdf_b64"],
             payload["safe_filename"],
