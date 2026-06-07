@@ -2,3 +2,7 @@
 # "minimal" hides the Deploy button and the developer toolbar options,
 # keeping only essential UI. Use "viewer" to also hide the hamburger menu.
 toolbarMode = "minimal"
+
+[server]
+# Avoid noisy tracebacks from Streamlit scanning optional transformers/torchvision modules.
+fileWatcherType = "none"

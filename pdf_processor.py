@@ -96,6 +96,9 @@ def split_documents(documents: List[Document]) -> List[Document]:
         for chunk in splitter.split_documents([document]):
             start = chunk.metadata.get("start_index", 0)
             chunk.metadata["line"] = document.page_content[:start].count("\n") + 1
+            page = chunk.metadata.get("page")
+            if isinstance(page, int):
+                chunk.metadata["page_label"] = page + 1
             all_chunks.append(chunk)
 
     return all_chunks

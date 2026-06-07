@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,9 +13,15 @@ CHUNK_OVERLAP = 50
 # ("what topics are covered?") more context to synthesise from.
 TOP_K_RESULTS = 6
 
+# Maximum source cards shown after answer-aligned citation filtering.
+CITATION_MAX_SOURCES = 3
+
 # --- ChromaDB ---
 CHROMA_PERSIST_DIR = "./chroma_db"
 CHROMA_COLLECTION_NAME = "multi_pdf_store"
+
+# --- Uploaded PDF storage (for source preview) ---
+UPLOADED_PDF_DIR = Path("./uploaded_pdfs")
 
 # --- Embedding model ---
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"

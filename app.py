@@ -10,6 +10,8 @@ import streamlit as st
 
 from config import EXAMPLE_QUESTIONS, APP_NAME
 from pdf_processor import load_pdfs, split_documents, filter_new_files
+from pdf_storage import clear_all_pdfs, delete_pdf, save_uploaded_pdf
+from source_viewer import dismiss_pdf_viewer, render_pdf_viewer_modal, render_source_citations
 from vector_store import (
     create_or_update_vector_store,
     load_existing_vector_store,
@@ -28,6 +30,7 @@ from rag_chain import (
 from utils import (
     validate_pdf_files,
     format_sources,
+    extract_source_items,
     build_chat_export,
     parse_page_reference,
 )
@@ -74,6 +77,20 @@ def apply_theme(mode: str):
     <style>
     .stChatMessage { border-radius: 8px; margin-bottom: 8px; }
     .stCaption { font-size: 0.8rem; margin-top: 4px; }
+    div[data-testid="stChatMessage"] div.stButton > button {
+        border: 1px solid #dbeafe;
+        background: #eff6ff;
+        color: #2563eb;
+        font-size: 0.82rem;
+        font-weight: 600;
+        padding: 0.35rem 0.7rem;
+        min-height: 2rem;
+    }
+    div[data-testid="stChatMessage"] div.stButton > button:hover {
+        border-color: #2563eb;
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
     </style>
     """
     st.markdown(base, unsafe_allow_html=True)
@@ -101,6 +118,16 @@ def initialise_session_state():
         # Part of the file_uploader's widget key; bumping it forces Streamlit
         # to render a fresh, empty uploader (used by "Reset All").
         st.session_state.uploader_key = 0
+    if "pdf_viewer" not in st.session_state:
+        st.session_state.pdf_viewer = None
+    if "pdf_viewer_token" not in st.session_state:
+        st.session_state.pdf_viewer_token = 0
+    if "pdf_viewer_item" not in st.session_state:
+        st.session_state.pdf_viewer_item = None
+    if "pdf_viewer_payload" not in st.session_state:
+        st.session_state.pdf_viewer_payload = None
+    if "pdf_viewer_stage" not in st.session_state:
+        st.session_state.pdf_viewer_stage = "idle"
     if "vector_store" not in st.session_state:
         vector_store = load_existing_vector_store()
         st.session_state.vector_store = vector_store
@@ -153,6 +180,11 @@ def process_uploaded_pdfs(uploaded_files):
         return
 
     with st.spinner(f"Processing {len(new_files)} PDF(s)..."):
+        for uploaded in new_files:
+            uploaded.seek(0)
+            save_uploaded_pdf(uploaded.name, uploaded.read())
+            uploaded.seek(0)
+
         documents, failed = load_pdfs(new_files)
         if failed:
             st.warning(f"Could not read (skipped): {', '.join(failed)}")
@@ -171,11 +203,18 @@ def process_uploaded_pdfs(uploaded_files):
 def remove_file(filename: str):
     """Remove a single indexed PDF and refresh the chain (FR-MEM, doc mgmt)."""
     delete_file(st.session_state.vector_store, filename)
+    delete_pdf(filename)
+    viewer_item = st.session_state.get("pdf_viewer_item") or {}
+    if viewer_item.get("file") == filename:
+        dismiss_pdf_viewer()
+        st.session_state.pdf_viewer_stage = "cleanup"
     rebuild_chain()
 
 
 def clear_chat():
     """Clear the conversation while keeping the indexed PDFs (FR-MEM-03)."""
+    dismiss_pdf_viewer()
+    st.session_state.pdf_viewer_stage = "cleanup"
     st.session_state.messages = []
     st.session_state.memory = get_memory()
     if st.session_state.chain is not None:
@@ -185,6 +224,9 @@ def clear_chat():
 def reset_session():
     """Clear chat history and the indexed knowledge base (FR-MEM-04)."""
     clear_vector_store(st.session_state.get("vector_store"))
+    clear_all_pdfs()
+    dismiss_pdf_viewer()
+    st.session_state.pdf_viewer_stage = "cleanup"
     st.session_state.messages = []
     st.session_state.memory = get_memory()
     st.session_state.chain = None
@@ -231,14 +273,14 @@ def render_sidebar():
             st.markdown("**Export conversation:**")
             col_md, col_txt = st.columns(2)
             col_md.download_button(
-                "⬇ .md",
+                "Export .md",
                 data=build_chat_export(st.session_state.messages, "md"),
                 file_name="chat_history.md",
                 mime="text/markdown",
                 use_container_width=True,
             )
             col_txt.download_button(
-                "⬇ .txt",
+                "Export .txt",
                 data=build_chat_export(st.session_state.messages, "txt"),
                 file_name="chat_history.txt",
                 mime="text/plain",
@@ -285,6 +327,9 @@ def render_starter_questions():
 
 def handle_question(prompt: str):
     """Run a question through the RAG chain and render the exchange."""
+    dismiss_pdf_viewer()
+    st.session_state.pdf_viewer_stage = "cleanup"
+
     with st.chat_message("user", avatar=USER_AVATAR):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -293,13 +338,25 @@ def handle_question(prompt: str):
         with st.spinner("Searching your documents..."):
             result = answer_prompt(prompt)
             answer = result["answer"]
+            source_items = extract_source_items(
+                result["source_documents"], answer=answer
+            )
             sources = format_sources(result["source_documents"])
         st.markdown(answer)
-        if sources:
+        if source_items:
+            render_source_citations(
+                source_items, f"live_{len(st.session_state.messages)}"
+            )
+        elif sources:
             st.caption(sources)
 
     st.session_state.messages.append(
-        {"role": "assistant", "content": answer, "sources": sources}
+        {
+            "role": "assistant",
+            "content": answer,
+            "sources": sources,
+            "source_items": source_items,
+        }
     )
 
 
@@ -335,7 +392,7 @@ def answer_prompt(prompt: str) -> dict:
             return result
         # No text on that page → fall through to normal retrieval.
 
-    return query_chain(st.session_state.chain, prompt)
+    return query_chain(st.session_state.chain, prompt, st.session_state.vector_store)
 
 
 def render_chat():
@@ -346,11 +403,13 @@ def render_chat():
             "'Process PDFs' to get started."
         )
 
-    for message in st.session_state.messages:
+    for index, message in enumerate(st.session_state.messages):
         avatar = USER_AVATAR if message["role"] == "user" else ASSISTANT_AVATAR
         with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
-            if message.get("sources"):
+            if message.get("source_items"):
+                render_source_citations(message["source_items"], f"msg_{index}")
+            elif message.get("sources"):
                 st.caption(message["sources"])
 
     chat_disabled = st.session_state.chain is None
@@ -371,6 +430,8 @@ def render_chat():
     st.session_state.pending_question = None
     if prompt:
         handle_question(prompt)
+
+    render_pdf_viewer_modal()
 
     st.markdown("---")
     st.caption(f"🤖 {APP_NAME}")

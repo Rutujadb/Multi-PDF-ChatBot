@@ -9,6 +9,8 @@ from typing import List, Optional, Tuple
 
 from langchain_core.documents import Document
 
+from citation_utils import best_excerpt_fragments, extract_answer_phrases
+
 _PAGE_RE = re.compile(r"page\s*(\d+)", re.IGNORECASE)
 
 
@@ -64,6 +66,67 @@ def _page_number(metadata: dict) -> str:
     return str(metadata.get("page_label", "?"))
 
 
+def _source_label(source: str, page: str, line) -> str:
+    """Build a compact human-readable source label."""
+    label = f"{source} - p.{page}"
+    if line:
+        label += f", line {line}"
+    return label
+
+
+def extract_source_items(
+    source_documents: List[Document],
+    answer: Optional[str] = None,
+) -> List[dict]:
+    """Convert retrieved documents into structured, clickable source entries.
+
+    Args:
+        source_documents: Retrieved chunks from the RAG chain.
+        answer: Optional assistant answer used to pick PDF highlight phrases.
+
+    Returns:
+        List of dicts with ``file``, ``page``, ``line``, ``excerpt``, ``label``.
+    """
+    items: List[dict] = []
+    seen = set()
+    for doc in source_documents or []:
+        meta = doc.metadata or {}
+        source = meta.get("source", "Unknown")
+        page = _page_number(meta)
+        line = meta.get("line")
+        excerpt = (doc.page_content or "").strip()
+        key = (source, page, line, excerpt[:160])
+        if key in seen:
+            continue
+        seen.add(key)
+
+        highlight_phrases: List[str] = []
+        if answer:
+            phrase_seen = set()
+            for phrase in extract_answer_phrases(answer):
+                key_phrase = phrase.lower()
+                if key_phrase not in phrase_seen:
+                    phrase_seen.add(key_phrase)
+                    highlight_phrases.append(phrase)
+            for fragment in best_excerpt_fragments(answer, excerpt):
+                key_phrase = fragment.lower()
+                if key_phrase not in phrase_seen:
+                    phrase_seen.add(key_phrase)
+                    highlight_phrases.append(fragment)
+
+        items.append(
+            {
+                "file": source,
+                "page": int(page) if str(page).isdigit() else page,
+                "line": line,
+                "excerpt": excerpt,
+                "label": _source_label(source, page, line),
+                "highlight_phrases": highlight_phrases,
+            }
+        )
+    return items
+
+
 def format_sources(source_documents: List[Document]) -> str:
     """Format retrieved-document metadata into a readable citation string.
 
@@ -86,16 +149,8 @@ def format_sources(source_documents: List[Document]) -> str:
         return ""
 
     citations: List[str] = []
-    for doc in source_documents:
-        meta = doc.metadata or {}
-        source = meta.get("source", "Unknown")
-        page = _page_number(meta)
-        line = meta.get("line")
-        cite = f"{source} - p.{page}"
-        if line:
-            cite += f", line {line}"
-        if cite not in citations:
-            citations.append(cite)
+    for item in extract_source_items(source_documents):
+        citations.append(item["label"])
 
     return "📄 **Sources:**  \n" + "  \n".join(f"• {c}" for c in citations)
 

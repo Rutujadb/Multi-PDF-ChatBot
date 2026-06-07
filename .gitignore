@@ -6,6 +6,7 @@ __pycache__/
 
 # Vector store data
 chroma_db/
+uploaded_pdfs/
 
 # HuggingFace model cache
 .cache/
@@ -13,6 +14,10 @@ chroma_db/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
 # Project docs and local Claude config (not committed)
 PLAN.md

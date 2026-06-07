@@ -18,6 +18,7 @@ import os
 from typing import TYPE_CHECKING, List, Optional
 
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
@@ -27,6 +28,7 @@ from config import (
     CHROMA_COLLECTION_NAME,
     TOP_K_RESULTS,
 )
+from citation_utils import ensure_page_label
 
 if TYPE_CHECKING:  # for type hints only; not imported at runtime
     from langchain_chroma import Chroma
@@ -114,6 +116,25 @@ def load_existing_vector_store() -> Optional["Chroma"]:
     return vector_store
 
 
+class _PageLabelRetriever(BaseRetriever):
+    """Inject 1-based ``page_label`` metadata on every retrieved chunk."""
+
+    def __init__(self, base_retriever: BaseRetriever):
+        """Wrap an existing retriever."""
+        super().__init__()
+        self._base_retriever = base_retriever
+
+    def _get_relevant_documents(
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun | None = None,
+    ) -> List[Document]:
+        """Retrieve documents and normalize page labels for citation display."""
+        docs = self._base_retriever.invoke(query)
+        return [ensure_page_label(doc) for doc in docs]
+
+
 def get_retriever(vector_store: "Chroma") -> BaseRetriever:
     """Create a similarity-search retriever from the vector store.
 
@@ -128,7 +149,7 @@ def get_retriever(vector_store: "Chroma") -> BaseRetriever:
         search_type="similarity",
         search_kwargs={"k": TOP_K_RESULTS},
     )
-    return retriever
+    return _PageLabelRetriever(retriever)
 
 
 def clear_vector_store(vector_store: "Chroma") -> bool:

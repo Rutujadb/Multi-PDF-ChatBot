@@ -30,8 +30,9 @@ from config import (
     OPENROUTER_MODEL,
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
-    SYSTEM_PROMPT_TEMPLATE,
+    CITATION_MAX_SOURCES,
 )
+from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
 
 
 def get_llm() -> BaseLanguageModel:
@@ -106,8 +107,8 @@ def build_rag_chain(
     # Label each retrieved chunk with its source filename and page inside the
     # context, so the model can name documents and summarise them per file.
     document_prompt = PromptTemplate(
-        input_variables=["page_content", "source", "page"],
-        template="[From {source}, page {page}]\n{page_content}",
+        input_variables=["page_content", "source", "page_label"],
+        template="[From {source}, page {page_label}]\n{page_content}",
     )
 
     chain = ConversationalRetrievalChain.from_llm(
@@ -125,27 +126,45 @@ def build_rag_chain(
 
 
 def query_chain(
-    chain: ConversationalRetrievalChain, question: str
+    chain: ConversationalRetrievalChain,
+    question: str,
+    vector_store=None,
 ) -> Dict[str, Any]:
     """Invoke the RAG chain with a user question.
 
     All errors are caught and returned as a user-facing message so the UI never
-    sees a raw stack trace (NFR-REL-03).
+    sees a raw stack trace (NFR-REL-03). Returned ``source_documents`` are
+    filtered to chunks that best support the generated answer.
 
     Args:
         chain: A built ``ConversationalRetrievalChain``.
         question: The user's question.
+        vector_store: Optional vector store for answer-aligned citation search.
 
     Returns:
         Dict with ``answer`` (str) and ``source_documents`` (list of Documents).
     """
     try:
         result = chain.invoke({"question": question})
+        answer = result.get(
+            "answer", "Sorry, I could not generate an answer."
+        )
+        raw_sources = result.get("source_documents", [])
+        for doc in raw_sources:
+            ensure_page_label(doc)
+        if is_refusal_answer(answer):
+            cited_sources = []
+        else:
+            cited_sources = resolve_citation_sources(
+                answer,
+                question,
+                raw_sources,
+                vector_store=vector_store,
+                max_sources=CITATION_MAX_SOURCES,
+            )
         return {
-            "answer": result.get(
-                "answer", "Sorry, I could not generate an answer."
-            ),
-            "source_documents": result.get("source_documents", []),
+            "answer": answer,
+            "source_documents": cited_sources,
         }
     except Exception as e:
         return {
@@ -175,17 +194,28 @@ def answer_from_documents(question: str, documents) -> Dict[str, Any]:
             "source_documents": [],
         }
 
+    labeled_docs = [ensure_page_label(doc) for doc in documents]
     context = "\n\n".join(
-        f"[From {d.metadata.get('source', 'Unknown')}, "
-        f"page {(d.metadata.get('page', 0) or 0) + 1}]\n{d.page_content}"
-        for d in documents
+        f"[From {doc.metadata.get('source', 'Unknown')}, "
+        f"page {doc.metadata.get('page_label', '?')}]\n{doc.page_content}"
+        for doc in labeled_docs
     )
     prompt = _qa_template().format(context=context, question=question)
 
     try:
         response = get_llm().invoke(prompt)
         answer = getattr(response, "content", str(response))
-        return {"answer": answer, "source_documents": documents}
+        if is_refusal_answer(answer):
+            cited = []
+        else:
+            cited = resolve_citation_sources(
+                answer,
+                question,
+                labeled_docs,
+                vector_store=None,
+                max_sources=CITATION_MAX_SOURCES,
+            )
+        return {"answer": answer, "source_documents": cited}
     except Exception as e:
         return {
             "answer": f"Error generating answer: {e}",
@@ -211,9 +241,11 @@ def _qa_template() -> str:
         "'[From <filename>, page <n>]', so you can refer to documents by their "
         "filename and summarise each one. You may summarise and synthesise "
         "across the context - for example, to describe the topics, themes, or "
-        "main points covered. Only if the context contains nothing relevant to "
-        'the question, reply exactly: "I don\'t have enough information in the '
-        'uploaded documents to answer this." Do not use any outside knowledge.'
+        "main points covered. Treat synonyms, abbreviations, and related phrasing "
+        "as relevant (e.g. COVID, COVID-19, coronavirus). "
+        "Only if the context contains nothing relevant to the question, reply "
+        'exactly: "I don\'t have enough information in the uploaded documents '
+        'to answer this." Do not use any outside knowledge.'
         "\n\nContext:\n{context}\n\n"
         "Question: {question}\nAnswer:"
     )

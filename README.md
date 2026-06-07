@@ -18,7 +18,8 @@ are grounded strictly in your uploaded documents and include source citations.
 
 | Layer | Technology |
 |---|---|
-| UI | Streamlit |
+| UI | React + Tailwind (landing + dashboard), Streamlit (classic alt) |
+| API | FastAPI (wraps LangChain pipeline for React UI) |
 | Orchestration | LangChain |
 | PDF parsing | pypdf / PyPDFLoader |
 | Embeddings (local, no API key) | HuggingFace `all-MiniLM-L6-v2` |
@@ -75,6 +76,27 @@ set `VECTOR_STORE=pinecone` and add your Pinecone credentials.
 
 ## Running the app
 
+### React UI (recommended — matches the design)
+
+Install Python and frontend dependencies, then start the dev stack:
+
+```bash
+pip install -r requirements.txt
+python run_dev.py
+```
+
+Open **http://localhost:5173** for the landing page and dashboard. The FastAPI backend runs on **http://localhost:8000**.
+
+To also launch the classic Streamlit UI alongside React:
+
+```bash
+python run_dev.py --streamlit
+```
+
+Streamlit opens at **http://localhost:8501**. The dashboard header includes a **Streamlit UI** link when it is running.
+
+### Streamlit only (classic UI)
+
 ```bash
 streamlit run app.py
 ```
@@ -95,7 +117,10 @@ The app opens in your browser at `http://localhost:8501`.
 
 ```
 multi-pdf-chatbot/
-├── app.py              # Streamlit UI + session orchestration
+├── app.py              # Streamlit classic UI + session orchestration
+├── api.py              # FastAPI backend for the React dashboard
+├── run_dev.py          # Starts React + API (+ optional Streamlit)
+├── frontend/           # React + Tailwind landing + dashboard
 ├── pdf_processor.py    # PDF loading, text extraction, chunking
 ├── vector_store.py     # ChromaDB embeddings + retriever
 ├── rag_chain.py        # LangChain RAG chain + memory
