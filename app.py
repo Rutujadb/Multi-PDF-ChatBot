@@ -5,6 +5,22 @@ modules. All stateful data lives in ``st.session_state``.
 
 SRS references: FR-UI-01 → FR-UI-07, FR-PDF-01, FR-MEM-01, FR-MEM-03, FR-MEM-04.
 """
+import os
+import streamlit as st
+
+
+def _apply_streamlit_secrets() -> None:
+    """Map Streamlit Cloud secrets to os.environ for config.py."""
+    try:
+        for key, value in st.secrets.items():
+            if isinstance(value, (str, int, float, bool)):
+                os.environ.setdefault(str(key), str(value))
+    except Exception:
+        pass
+
+
+_apply_streamlit_secrets()
+
 
 import streamlit as st
 
