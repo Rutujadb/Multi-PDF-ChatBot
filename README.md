@@ -386,6 +386,11 @@ multi-pdf-chatbot/
 └── uploaded_pdfs/          # Persisted PDFs for preview (auto-created)
 ```
 
+## Documentation
+
+- [Design document](docs/DESIGN.md) — architecture, pipelines, API, decisions
+- [User manual](docs/USER_MANUAL.md) — step-by-step usage guide
+
 ## Known limitations
 
 - **Single-user / localhost** - not designed for concurrent multi-user production load
