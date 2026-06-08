@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://multi-pdf-chat-bot.vercel.app/">React Live Demo</a> ·
   <a href="https://multi-pdf-chatbot-rb.streamlit.app/">Streamlit Live Demo</a> ·
   <a href="https://github.com/Rutujadb/Multi-PDF-ChatBot">GitHub</a> ·
   <a href="#architecture--design">Architecture</a>
@@ -20,11 +21,12 @@
 
 | UI | URL | Notes |
 |---|---|---|
-| **Streamlit (classic)** | [multi-pdf-chatbot-rb.streamlit.app](https://multi-pdf-chatbot-rb.streamlit.app/) | Fully hosted PoC - upload, chat, and source preview in the browser |
-| **React + FastAPI** | `<!-- TODO: add React deploy URL -->` _Coming soon_ | React dashboard requires the FastAPI backend; use [local dev](#react-ui--fastapi-recommended) until deployed |
+| **React UI (Vercel)** | [multi-pdf-chat-bot.vercel.app](https://multi-pdf-chat-bot.vercel.app/) | Landing + dashboard — recommended |
+| **FastAPI backend (Render)** | [multi-pdf-chatbot-y6nu.onrender.com](https://multi-pdf-chatbot-y6nu.onrender.com) | API for the React UI ([health check](https://multi-pdf-chatbot-y6nu.onrender.com/api/health)) |
+| **Streamlit (classic)** | [multi-pdf-chatbot-rb.streamlit.app](https://multi-pdf-chatbot-rb.streamlit.app/) | Alternate hosted UI — upload, chat, and source preview |
 | **GitHub repo** | [github.com/Rutujadb/Multi-PDF-ChatBot](https://github.com/Rutujadb/Multi-PDF-ChatBot) | Source code, issues, and contributions |
 
-> **React deploy note:** The React UI is a static Vite build that talks to `POST /api/*` on a FastAPI server. When you deploy React (e.g. Vercel, Netlify, Cloudflare Pages), point the build at your hosted API URL and update `frontend/src/config.js` or environment variables accordingly.
+> **React + API:** The Vercel frontend calls the Render API at `https://multi-pdf-chatbot-y6nu.onrender.com`. On Render free tier the API may sleep after inactivity — the first request can take 1–3 minutes to wake up.
 
 ---
 
@@ -337,13 +339,20 @@ streamlit run app.py
 
 ## How to use
 
-### React dashboard
+### React dashboard (live)
 
-1. Open http://localhost:5173/dashboard
+1. Open [multi-pdf-chat-bot.vercel.app/dashboard](https://multi-pdf-chat-bot.vercel.app/dashboard)
 2. Drop PDFs in the sidebar → **Process PDFs**
 3. Ask a question - sources appear as clickable chips
 4. Click a source to open the highlighted PDF preview panel
 5. **Clear chat** keeps indexed PDFs · **Reset session** wipes everything
+
+> If the API was idle, wait 1–3 minutes after your first action for [Render](https://multi-pdf-chatbot-y6nu.onrender.com/api/health) to wake up.
+
+### React dashboard (local dev)
+
+1. Open http://localhost:5173/dashboard
+2. Follow the same steps as above
 
 ### Streamlit classic
 
@@ -383,7 +392,7 @@ multi-pdf-chatbot/
 - **Text-based PDFs only** - scanned image-only PDFs are not supported (no OCR)
 - **Chat history is session-scoped** - lost on browser refresh (indexed vectors persist on disk)
 - **LLM rate limits** apply per provider (OpenRouter / Gemini free tiers)
-- **React deploy** requires a hosted FastAPI backend - static frontend alone cannot chat
+- **React deploy** — live at [Vercel](https://multi-pdf-chat-bot.vercel.app/) + [Render API](https://multi-pdf-chatbot-y6nu.onrender.com); free tier API sleeps when idle and has ephemeral disk
 
 ## Future scope
 
