@@ -47,7 +47,12 @@ from rag_chain import (
     get_memory,
     query_chain,
 )
-from utils import extract_source_items, format_sources, parse_page_reference
+from utils import (
+    extract_source_items,
+    format_sources,
+    is_multi_document_overview,
+    parse_page_reference,
+)
 from vector_store import (
     clear_vector_store,
     create_or_update_vector_store,
@@ -55,6 +60,7 @@ from vector_store import (
     get_page_documents,
     get_retriever,
     load_existing_vector_store,
+    retrieve_balanced_documents,
 )
 
 SOURCE_COLORS = ("brand", "emerald2", "amber2")
@@ -176,11 +182,20 @@ def index_stats(vector_store: Any) -> Dict[str, Any]:
 
 def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
     """Route a question through page-targeted or normal RAG retrieval."""
-    ref_file, ref_page = parse_page_reference(prompt, session.indexed_files)
+    ensure_session_vector_store(session)
+    indexed_files = session.indexed_files or (
+        get_indexed_filenames(session.vector_store)
+        if session.vector_store
+        else []
+    )
+
+    ref_file, ref_page = parse_page_reference(prompt, indexed_files)
     if ref_file and ref_page:
         page_docs = get_page_documents(session.vector_store, ref_file, ref_page)
         if page_docs:
-            result = answer_from_documents(prompt, page_docs)
+            result = answer_from_documents(
+                prompt, page_docs, vector_store=session.vector_store
+            )
             try:
                 session.memory.save_context(
                     {"question": prompt}, {"answer": result["answer"]}
@@ -194,6 +209,25 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
             status_code=400,
             detail="Upload and process PDFs before chatting.",
         )
+
+    if is_multi_document_overview(prompt, len(indexed_files)):
+        overview_docs = retrieve_balanced_documents(
+            session.vector_store,
+            prompt,
+            per_file_k=4,
+            global_k=4,
+        )
+        result = answer_from_documents(
+            prompt, overview_docs, vector_store=session.vector_store
+        )
+        try:
+            session.memory.save_context(
+                {"question": prompt}, {"answer": result["answer"]}
+            )
+        except Exception:
+            pass
+        return result
+
     return query_chain(session.chain, prompt, session.vector_store)
 
 

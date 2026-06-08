@@ -36,6 +36,7 @@ from vector_store import (
     get_page_documents,
     clear_vector_store,
     delete_file,
+    retrieve_balanced_documents,
 )
 from rag_chain import (
     get_memory,
@@ -48,6 +49,7 @@ from utils import (
     format_sources,
     extract_source_items,
     build_chat_export,
+    is_multi_document_overview,
     parse_page_reference,
 )
 
@@ -390,15 +392,16 @@ def answer_prompt(prompt: str) -> dict:
     Returns:
         Dict with ``answer`` and ``source_documents``.
     """
-    ref_file, ref_page = parse_page_reference(
-        prompt, st.session_state.indexed_files
-    )
+    indexed_files = st.session_state.indexed_files
+    ref_file, ref_page = parse_page_reference(prompt, indexed_files)
     if ref_file and ref_page:
         page_docs = get_page_documents(
             st.session_state.vector_store, ref_file, ref_page
         )
         if page_docs:
-            result = answer_from_documents(prompt, page_docs)
+            result = answer_from_documents(
+                prompt, page_docs, vector_store=st.session_state.vector_store
+            )
             try:
                 st.session_state.memory.save_context(
                     {"question": prompt}, {"answer": result["answer"]}
@@ -407,6 +410,26 @@ def answer_prompt(prompt: str) -> dict:
                 pass
             return result
         # No text on that page → fall through to normal retrieval.
+
+    if is_multi_document_overview(prompt, len(indexed_files)):
+        overview_docs = retrieve_balanced_documents(
+            st.session_state.vector_store,
+            prompt,
+            per_file_k=4,
+            global_k=4,
+        )
+        result = answer_from_documents(
+            prompt,
+            overview_docs,
+            vector_store=st.session_state.vector_store,
+        )
+        try:
+            st.session_state.memory.save_context(
+                {"question": prompt}, {"answer": result["answer"]}
+            )
+        except Exception:
+            pass
+        return result
 
     return query_chain(st.session_state.chain, prompt, st.session_state.vector_store)
 

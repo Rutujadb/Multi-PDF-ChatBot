@@ -188,7 +188,11 @@ def query_chain(
         }
 
 
-def answer_from_documents(question: str, documents) -> Dict[str, Any]:
+def answer_from_documents(
+    question: str,
+    documents,
+    vector_store=None,
+) -> Dict[str, Any]:
     """Answer a question using an explicit set of documents (no retrieval).
 
     Used for page-targeted questions, where the relevant chunks are fetched by
@@ -227,7 +231,7 @@ def answer_from_documents(question: str, documents) -> Dict[str, Any]:
                 answer,
                 question,
                 labeled_docs,
-                vector_store=None,
+                vector_store=vector_store,
                 max_sources=CITATION_MAX_SOURCES,
             )
         return {"answer": answer, "source_documents": cited}
@@ -254,9 +258,12 @@ def _qa_template() -> str:
         "uploaded PDF documents. Base your answer only on the provided context "
         "below. Each excerpt is prefixed with its source as "
         "'[From <filename>, page <n>]', so you can refer to documents by their "
-        "filename and summarise each one. You may summarise and synthesise "
-        "across the context - for example, to describe the topics, themes, or "
-        "main points covered. Treat synonyms, abbreviations, and related phrasing "
+        "filename and summarise each one. When multiple documents appear in the "
+        "context and the question asks about each PDF, all PDFs, or a general "
+        "summary, provide a separate summary for every document filename you "
+        "see in the context. You may summarise and synthesise across the "
+        "context - for example, to describe the topics, themes, or main points "
+        "covered. Treat synonyms, abbreviations, and related phrasing "
         "as relevant (e.g. COVID, COVID-19, coronavirus). "
         "Only if the context contains nothing relevant to the question, reply "
         'exactly: "I don\'t have enough information in the uploaded documents '

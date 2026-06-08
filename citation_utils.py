@@ -174,6 +174,59 @@ def count_answer_phrase_hits(answer: str, content: str) -> int:
     return hits
 
 
+def sources_mentioned_in_answer(answer: str) -> List[str]:
+    """Return PDF filenames explicitly referenced in an assistant answer."""
+    found: List[str] = []
+    seen: Set[str] = set()
+    patterns = (
+        r"\[From\s+([^\],\]]+\.pdf)\b",
+        r"\*\*([^\*\n]+\.pdf)\*\*",
+        r"`([^`\n]+\.pdf)`",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, answer, re.IGNORECASE):
+            name = match.group(1).strip()
+            key = name.lower()
+            if name and key not in seen:
+                seen.add(key)
+                found.append(name)
+    return found
+
+
+def _match_source_filename(candidate: str, available_sources: List[str]) -> Optional[str]:
+    """Map a filename mentioned in text to an indexed source name."""
+    if not candidate:
+        return None
+    candidate_lower = candidate.lower()
+    for source in available_sources:
+        if source.lower() == candidate_lower:
+            return source
+    for source in available_sources:
+        if candidate_lower in source.lower() or source.lower() in candidate_lower:
+            return source
+    return None
+
+
+def _chunk_supports_answer(
+    combined: float,
+    answer_sim: float,
+    lexical: float,
+    phrase_hits: int,
+    top_combined: float,
+    *,
+    relaxed: bool = False,
+) -> bool:
+    """Return True when a chunk is a reasonable citation for the answer."""
+    margin = 0.22 if relaxed else 0.18
+    close_to_top = combined >= max(0.28 if relaxed else 0.30, top_combined - margin)
+    supports_answer = (
+        answer_sim >= (0.22 if relaxed else 0.26)
+        or lexical >= (0.05 if relaxed else 0.08)
+        or phrase_hits >= 1
+    )
+    return close_to_top and supports_answer
+
+
 def _cosine_similarity(left: List[float], right: List[float]) -> float:
     """Compute cosine similarity between two embedding vectors."""
     dot = sum(a * b for a, b in zip(left, right))
@@ -219,8 +272,15 @@ def resolve_citation_sources(
     if vector_store is not None and answer.strip():
         search_query = f"{question.strip()}\n{answer.strip()[:800]}"
         try:
-            extra = vector_store.similarity_search(search_query, k=8)
-            candidates.extend(ensure_page_label(doc) for doc in extra)
+            from vector_store import retrieve_balanced_documents
+
+            extra = retrieve_balanced_documents(
+                vector_store,
+                search_query,
+                global_k=6,
+                per_file_k=2,
+            )
+            candidates.extend(extra)
         except Exception:
             pass
 
@@ -267,26 +327,74 @@ def resolve_citation_sources(
     top_combined = scored[0][0]
 
     selected: List[Document] = []
+    selected_keys: Set[Tuple[Any, ...]] = set()
+
+    def _add_doc(doc: Document) -> bool:
+        key = _doc_key(doc)
+        if key in selected_keys:
+            return False
+        selected_keys.add(key)
+        selected.append(doc)
+        return True
+
+    unique_sources = sorted(
+        {
+            (doc.metadata or {}).get("source")
+            for doc in unique
+            if (doc.metadata or {}).get("source")
+        }
+    )
+    mentioned = sources_mentioned_in_answer(answer)
+    target_files: List[str] = []
+    seen_targets: Set[str] = set()
+    for name in mentioned:
+        matched = _match_source_filename(name, unique_sources)
+        if matched and matched not in seen_targets:
+            seen_targets.add(matched)
+            target_files.append(matched)
+
+    multi_doc_answer = len(unique_sources) >= 2 and (
+        len(target_files) >= 2 or len(unique_sources) >= 2
+    )
+    effective_max = (
+        max(max_sources, min(max(len(target_files), len(unique_sources)) * 2, 8))
+        if multi_doc_answer
+        else max_sources
+    )
+
+    if multi_doc_answer:
+        files_to_cover = target_files if len(target_files) >= 2 else unique_sources
+        for filename in files_to_cover:
+            for combined, answer_sim, lexical, phrase_hits, doc in scored:
+                if (doc.metadata or {}).get("source") != filename:
+                    continue
+                if _chunk_supports_answer(
+                    combined,
+                    answer_sim,
+                    lexical,
+                    phrase_hits,
+                    top_combined,
+                    relaxed=True,
+                ):
+                    _add_doc(doc)
+                    break
+
     for combined, answer_sim, lexical, phrase_hits, doc in scored:
-        if len(selected) >= max_sources:
+        if len(selected) >= effective_max:
             break
-        # Be a bit more permissive across multiple PDFs. Otherwise the
-        # highest-scoring PDF dominates and we only cite a single source.
-        close_to_top = combined >= max(0.30, top_combined - 0.18)
-        supports_answer = (
-            answer_sim >= 0.26
-            or lexical >= 0.08
-            or phrase_hits >= 1
-        )
-        if close_to_top and supports_answer:
-            selected.append(doc)
+        if _chunk_supports_answer(
+            combined, answer_sim, lexical, phrase_hits, top_combined
+        ):
+            _add_doc(doc)
 
     if not selected:
         for combined, answer_sim, lexical, phrase_hits, doc in scored:
-            if len(selected) >= max_sources:
+            if len(selected) >= effective_max:
                 break
-            question_overlap = _lexical_overlap_score(question, doc.page_content or "")
+            question_overlap = _lexical_overlap_score(
+                question, doc.page_content or ""
+            )
             if question_overlap >= 0.20 and combined >= max(0.30, top_combined - 0.12):
-                selected.append(doc)
+                _add_doc(doc)
 
     return selected
