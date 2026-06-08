@@ -385,6 +385,13 @@ multi-pdf-chatbot/
 - **LLM rate limits** apply per provider (OpenRouter / Gemini free tiers)
 - **React deploy** requires a hosted FastAPI backend — static frontend alone cannot chat
 
+## Future scope
+
+- **OCR for scanned documents** — support image-only PDFs by extracting text from scans before chunking and indexing
+- **Real-time suggested follow-ups**
+  - After each answer, generate contextual follow-up questions from the user's question and the assistant's response
+  - When chat is empty but PDFs are indexed, generate starter questions from the processed document index (topics and content across uploaded files)
+
 ## License
 
 See repository for license details.
