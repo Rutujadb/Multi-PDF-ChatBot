@@ -41,8 +41,8 @@ Deploy the **backend first**, then the frontend (you need the API URL for `VITE_
 | **Branch** | `main` |
 | **Root Directory** | *(leave empty — repo root)* |
 | **Runtime** | `Python 3` |
-| **Build Command** | `pip install -r requirements.txt` |
-| **Start Command** | `uvicorn api:app --host 0.0.0.0 --port $PORT` |
+| **Build Command** | `pip install -r requirements-api.txt` |
+| **Start Command** | `python start.py` |
 | **Instance Type** | **Free** |
 
 > Optional: Render can read `render.yaml` from the repo if you use **Blueprint** deploy.
@@ -211,7 +211,8 @@ FRONTEND_ALLOWED_ORIGINS=https://multi-pdf-chatbot.pages.dev
 | CORS error in browser | Add exact frontend URL to `FRONTEND_ALLOWED_ORIGINS` on Render (no trailing `/`) |
 | API request goes to wrong host | Check `VITE_API_BASE_URL` on Vercel/Pages; redeploy frontend after changing |
 | 502 / timeout on first request | Render waking up; wait 2–5 min and retry |
-| Build fails on Render (memory) | Retry build; consider Hugging Face Docker Space or a small VM |
+| Build fails on Render (memory) | Use `requirements-api.txt`; retry build; consider Hugging Face Docker Space or a small VM |
+| Port scan timeout / no open ports | Set start command to `python start.py`; use `requirements-api.txt`; health check path `/api/health` |
 | Indexed PDFs gone after restart | Expected on Render free — ephemeral disk |
 | `/dashboard` 404 on refresh | Ensure `vercel.json` or `_redirects` is deployed |
 
