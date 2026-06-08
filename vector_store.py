@@ -60,49 +60,73 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     return _embeddings
 
 
-def create_or_update_vector_store(chunks: List[Document]) -> "Chroma":
+def _resolve_persist_dir(persist_dir: Optional[str] = None) -> str:
+    """Return the Chroma persist directory to use for a store operation."""
+    return persist_dir or CHROMA_PERSIST_DIR
+
+
+def create_or_update_vector_store(
+    chunks: List[Document],
+    persist_dir: Optional[str] = None,
+    existing_store: Optional["Chroma"] = None,
+) -> "Chroma":
     """Create a new ChromaDB store or add chunks to the existing one.
 
-    If a persisted store already exists at ``CHROMA_PERSIST_DIR`` the chunks are
+    If a persisted store already exists at the target directory the chunks are
     appended to it; otherwise a new collection is created. Data is written to
     disk so it survives application restarts.
 
     Args:
         chunks: List of chunked ``Document`` objects to embed and store.
+        persist_dir: Optional override for the Chroma persist directory.
+        existing_store: Optional open store to append chunks to in-process.
 
     Returns:
         The ``Chroma`` vector store instance containing the chunks.
     """
+    if existing_store is not None:
+        if chunks:
+            existing_store.add_documents(chunks)
+        return existing_store
+
+    target_dir = _resolve_persist_dir(persist_dir)
     embeddings = get_embeddings()  # load torch model before importing chromadb
     from langchain_chroma import Chroma
 
-    if os.path.exists(CHROMA_PERSIST_DIR):
+    if os.path.exists(target_dir):
         vector_store = Chroma(
             collection_name=CHROMA_COLLECTION_NAME,
             embedding_function=embeddings,
-            persist_directory=CHROMA_PERSIST_DIR,
+            persist_directory=target_dir,
         )
         if chunks:
             vector_store.add_documents(chunks)
     else:
+        os.makedirs(target_dir, exist_ok=True)
         vector_store = Chroma.from_documents(
             documents=chunks,
             embedding=embeddings,
             collection_name=CHROMA_COLLECTION_NAME,
-            persist_directory=CHROMA_PERSIST_DIR,
+            persist_directory=target_dir,
         )
 
     return vector_store
 
 
-def load_existing_vector_store() -> Optional["Chroma"]:
+def load_existing_vector_store(
+    persist_dir: Optional[str] = None,
+) -> Optional["Chroma"]:
     """Load a persisted ChromaDB vector store from disk if one exists.
 
+    Args:
+        persist_dir: Optional override for the Chroma persist directory.
+
     Returns:
-        A ``Chroma`` instance if ``CHROMA_PERSIST_DIR`` exists, otherwise
+        A ``Chroma`` instance if the persist directory exists, otherwise
         ``None`` (signalling that no PDFs have been indexed yet).
     """
-    if not os.path.exists(CHROMA_PERSIST_DIR):
+    target_dir = _resolve_persist_dir(persist_dir)
+    if not os.path.exists(target_dir):
         return None
 
     embeddings = get_embeddings()  # load torch model before importing chromadb
@@ -111,7 +135,7 @@ def load_existing_vector_store() -> Optional["Chroma"]:
     vector_store = Chroma(
         collection_name=CHROMA_COLLECTION_NAME,
         embedding_function=embeddings,
-        persist_directory=CHROMA_PERSIST_DIR,
+        persist_directory=target_dir,
     )
     return vector_store
 

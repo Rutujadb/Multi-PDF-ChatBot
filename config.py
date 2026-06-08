@@ -11,10 +11,10 @@ CHUNK_OVERLAP = 50
 # --- Retrieval ---
 # Number of chunks fetched per query. Higher gives broad/summary questions
 # ("what topics are covered?") more context to synthesise from.
-TOP_K_RESULTS = 6
+TOP_K_RESULTS = 8
 
 # Maximum source cards shown after answer-aligned citation filtering.
-CITATION_MAX_SOURCES = 3
+CITATION_MAX_SOURCES = 4
 
 # --- ChromaDB ---
 CHROMA_PERSIST_DIR = "./chroma_db"

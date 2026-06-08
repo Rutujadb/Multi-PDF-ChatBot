@@ -9,9 +9,11 @@ SRS references: FR-UI-01 → FR-UI-07, FR-PDF-01, FR-MEM-01 → FR-MEM-04.
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,7 @@ from pydantic import BaseModel
 
 from config import (
     APP_NAME,
+    CHROMA_PERSIST_DIR,
     EMBEDDING_MODEL_NAME,
     EXAMPLE_QUESTIONS,
     LLM_MAX_TOKENS,
@@ -29,10 +32,12 @@ from config import (
     VECTOR_STORE,
     get_active_llm_name,
 )
+from api_source_preview import SourcePreviewRequest, render_source_download, render_source_preview_image
 from api_upload import (
     buffer_fastapi_uploads,
     filter_new_api_files,
     load_buffered_pdfs,
+    persist_api_uploads,
     validate_api_pdf_files,
 )
 from pdf_processor import split_documents
@@ -42,7 +47,7 @@ from rag_chain import (
     get_memory,
     query_chain,
 )
-from utils import format_sources, parse_page_reference
+from utils import extract_source_items, format_sources, parse_page_reference
 from vector_store import (
     clear_vector_store,
     create_or_update_vector_store,
@@ -54,6 +59,22 @@ from vector_store import (
 
 SOURCE_COLORS = ("brand", "emerald2", "amber2")
 STREAMLIT_URL = STREAMLIT_APP_URL
+
+
+def session_chroma_dir(session_id: str) -> str:
+    """Return the per-session Chroma persist path for the React API."""
+    return str(Path(CHROMA_PERSIST_DIR) / "api_sessions" / session_id)
+
+
+def _normalize_upload_files(
+    files: Union[UploadFile, List[UploadFile], None],
+) -> List[UploadFile]:
+    """Coerce FastAPI upload input into a list of ``UploadFile`` objects."""
+    if files is None:
+        return []
+    if isinstance(files, list):
+        return files
+    return [files]
 
 
 @dataclass
@@ -176,14 +197,25 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
     return query_chain(session.chain, prompt, session.vector_store)
 
 
-def create_session() -> AppSession:
-    """Create a new session, loading any persisted vector store."""
-    session = AppSession(session_id=str(uuid.uuid4()))
-    vector_store = load_existing_vector_store()
-    session.vector_store = vector_store
+def create_session(session_id: Optional[str] = None) -> AppSession:
+    """Create or restore a session, loading its persisted vector store."""
+    sid = session_id or str(uuid.uuid4())
+    persist_dir = session_chroma_dir(sid)
+    vector_store = load_existing_vector_store(persist_dir)
+    session = AppSession(session_id=sid, vector_store=vector_store)
     if vector_store is not None:
         session.rebuild_chain()
     return session
+
+
+def ensure_session_vector_store(session: AppSession) -> None:
+    """Load the session vector store from disk when it is not in memory."""
+    if session.vector_store is None:
+        session.vector_store = load_existing_vector_store(
+            session_chroma_dir(session.session_id)
+        )
+        if session.vector_store is not None:
+            session.rebuild_chain()
 
 
 app = FastAPI(title=f"{APP_NAME} API", version="1.0.0")
@@ -214,8 +246,10 @@ def get_or_create_default_session() -> AppSession:
 
 
 def get_session(session_id: Optional[str] = None) -> AppSession:
-    """Return an existing session or fall back to the default one."""
-    if session_id and session_id in _sessions:
+    """Return an existing session, restoring it from disk when needed."""
+    if session_id:
+        if session_id not in _sessions:
+            _sessions[session_id] = create_session(session_id)
         return _sessions[session_id]
     return get_or_create_default_session()
 
@@ -238,6 +272,7 @@ def create_api_session():
 def get_status(session_id: Optional[str] = None):
     """Return session, index, and configuration details for the dashboard."""
     session = get_session(session_id)
+    ensure_session_vector_store(session)
     stats = index_stats(session.vector_store)
     return {
         "session_id": session.session_id,
@@ -270,12 +305,19 @@ async def upload_pdfs(
 ):
     """Validate, embed, and index uploaded PDF files."""
     session = get_session(session_id)
-    if not files:
+    upload_files = _normalize_upload_files(files)
+    if not upload_files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
-    buffered_files = await buffer_fastapi_uploads(files)
+    buffered_files = await buffer_fastapi_uploads(upload_files)
     valid_files, invalid_files = validate_api_pdf_files(buffered_files)
-    new_files, skipped = filter_new_api_files(valid_files, session.indexed_files)
+    ensure_session_vector_store(session)
+    already_indexed = (
+        get_indexed_filenames(session.vector_store)
+        if session.vector_store
+        else []
+    )
+    new_files, skipped = filter_new_api_files(valid_files, already_indexed)
 
     if not new_files and not invalid_files and skipped:
         return {
@@ -283,6 +325,7 @@ async def upload_pdfs(
             "processed": 0,
             "skipped": skipped,
             "invalid": invalid_files,
+            "indexed_files": index_stats(session.vector_store)["files"],
         }
 
     if not new_files:
@@ -291,28 +334,51 @@ async def upload_pdfs(
             "processed": 0,
             "skipped": skipped,
             "invalid": invalid_files,
+            "failed": [],
+            "indexed_files": index_stats(session.vector_store)["files"],
         }
 
     documents, failed = load_buffered_pdfs(new_files)
-    if failed:
-        pass
     if not documents:
-        raise HTTPException(
-            status_code=400,
-            detail="No readable text found in the uploaded PDF(s).",
-        )
+        detail = "No readable text found in the uploaded PDF(s)."
+        if failed:
+            detail += f" Could not read: {', '.join(failed)}."
+        raise HTTPException(status_code=400, detail=detail)
 
     chunks = split_documents(documents)
-    session.vector_store = create_or_update_vector_store(chunks)
+    persist_dir = session_chroma_dir(session.session_id)
+    session.vector_store = create_or_update_vector_store(
+        chunks,
+        persist_dir=persist_dir,
+        existing_store=session.vector_store,
+    )
+    indexed_names = {
+        doc.metadata.get("source")
+        for doc in documents
+        if doc.metadata.get("source")
+    }
+    persist_api_uploads(
+        [upload for upload in new_files if upload.name in indexed_names]
+    )
     session.rebuild_chain()
+    stats = index_stats(session.vector_store)
+
+    indexed_count = len(indexed_names)
+    message = f"{indexed_count} PDF(s) indexed."
+    if skipped:
+        message += f" {len(skipped)} already indexed, skipped."
+    if failed:
+        message += f" Could not read: {', '.join(failed)}."
+    if invalid_files:
+        message += f" Invalid files skipped: {', '.join(invalid_files)}."
 
     return {
-        "message": f"{len(new_files)} PDF(s) processed and indexed.",
-        "processed": len(new_files),
+        "message": message,
+        "processed": indexed_count,
         "skipped": skipped,
         "invalid": invalid_files,
         "failed": failed,
-        "indexed_files": index_stats(session.vector_store)["files"],
+        "indexed_files": stats["files"],
     }
 
 
@@ -320,6 +386,7 @@ async def upload_pdfs(
 def chat(payload: ChatRequest, session_id: Optional[str] = None):
     """Ask a question against the indexed knowledge base."""
     session = get_session(session_id)
+    ensure_session_vector_store(session)
     prompt = (payload.message or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
@@ -327,7 +394,13 @@ def chat(payload: ChatRequest, session_id: Optional[str] = None):
     session.messages.append({"role": "user", "text": prompt})
     result = answer_question(session, prompt)
     answer = result["answer"]
-    sources = structured_sources(result.get("source_documents", []))
+    source_items = extract_source_items(
+        result.get("source_documents", []), answer=answer
+    )
+    sources = [
+        {**item, "color": SOURCE_COLORS[index % len(SOURCE_COLORS)]}
+        for index, item in enumerate(source_items)
+    ]
     sources_text = format_sources(result.get("source_documents", []))
 
     assistant_message = {
@@ -360,8 +433,16 @@ def clear_chat(session_id: Optional[str] = None):
 @app.post("/api/reset")
 def reset_session(session_id: Optional[str] = None):
     """Clear chat history and wipe the indexed knowledge base."""
+    from pdf_storage import delete_pdf
+
     session = get_session(session_id)
+    ensure_session_vector_store(session)
+    for filename in list(session.indexed_files):
+        delete_pdf(filename)
     clear_vector_store(session.vector_store)
+    session_dir = Path(session_chroma_dir(session.session_id))
+    if session_dir.exists():
+        shutil.rmtree(session_dir, ignore_errors=True)
     session.messages = []
     session.memory = get_memory()
     session.chain = None
@@ -372,3 +453,15 @@ def reset_session(session_id: Optional[str] = None):
         "messages": [],
         "indexed_files": [],
     }
+
+
+@app.post("/api/source/preview")
+def source_preview(body: SourcePreviewRequest):
+    """Return a PNG preview of a cited PDF page with highlights."""
+    return render_source_preview_image(body)
+
+
+@app.post("/api/source/download")
+def source_download(body: SourcePreviewRequest):
+    """Download the highlighted single-page PDF for a citation."""
+    return render_source_download(body)

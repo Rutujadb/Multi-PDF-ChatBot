@@ -44,6 +44,14 @@ async def buffer_fastapi_uploads(upload_files: List[UploadFile]) -> List[Buffere
     return buffered
 
 
+def persist_api_uploads(uploaded_files: List[BufferedPdfUpload]) -> None:
+    """Save buffered API uploads to disk for source preview in the React UI."""
+    from pdf_storage import save_uploaded_pdf
+
+    for upload in uploaded_files:
+        save_uploaded_pdf(upload.name, upload.read())
+
+
 def validate_api_pdf_files(
     uploaded_files: List[BufferedPdfUpload],
 ) -> Tuple[List[BufferedPdfUpload], List[str]]:

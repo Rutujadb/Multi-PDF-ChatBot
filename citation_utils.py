@@ -270,12 +270,14 @@ def resolve_citation_sources(
     for combined, answer_sim, lexical, phrase_hits, doc in scored:
         if len(selected) >= max_sources:
             break
-        close_to_top = combined >= max(0.32, top_combined - 0.10)
+        # Be a bit more permissive across multiple PDFs. Otherwise the
+        # highest-scoring PDF dominates and we only cite a single source.
+        close_to_top = combined >= max(0.30, top_combined - 0.18)
         supports_answer = (
-            answer_sim >= 0.28 or lexical >= 0.10 or phrase_hits >= 1
+            answer_sim >= 0.26
+            or lexical >= 0.08
+            or phrase_hits >= 1
         )
-        if has_distinctive_phrases and phrase_hits == 0:
-            supports_answer = False
         if close_to_top and supports_answer:
             selected.append(doc)
 
