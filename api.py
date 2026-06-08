@@ -33,7 +33,7 @@ from config import (
     get_active_llm_name,
     get_cors_origins,
 )
-from api_source_preview import SourcePreviewRequest, render_source_download, render_source_preview_image
+from api_source_preview import SourcePreviewRequest
 from api_upload import (
     buffer_fastapi_uploads,
     filter_new_api_files,
@@ -42,30 +42,52 @@ from api_upload import (
     validate_api_pdf_files,
 )
 from pdf_processor import split_documents
-from rag_chain import (
-    answer_from_documents,
-    build_rag_chain,
-    get_memory,
-    query_chain,
-)
 from utils import (
     extract_source_items,
     format_sources,
     is_multi_document_overview,
     parse_page_reference,
 )
-from vector_store import (
-    clear_vector_store,
-    create_or_update_vector_store,
-    get_indexed_filenames,
-    get_page_documents,
-    get_retriever,
-    load_existing_vector_store,
-    retrieve_balanced_documents,
-)
 
 SOURCE_COLORS = ("brand", "emerald2", "amber2")
 STREAMLIT_URL = STREAMLIT_APP_URL
+
+
+def _get_memory():
+    """Lazy-load conversation memory to keep API startup fast on Render."""
+    from rag_chain import get_memory
+
+    return get_memory()
+
+
+def _rag_chain():
+    """Lazy-load RAG chain helpers."""
+    from rag_chain import answer_from_documents, build_rag_chain, query_chain
+
+    return answer_from_documents, build_rag_chain, query_chain
+
+
+def _vector_store():
+    """Lazy-load vector store helpers."""
+    from vector_store import (
+        clear_vector_store,
+        create_or_update_vector_store,
+        get_indexed_filenames,
+        get_page_documents,
+        get_retriever,
+        load_existing_vector_store,
+        retrieve_balanced_documents,
+    )
+
+    return (
+        clear_vector_store,
+        create_or_update_vector_store,
+        get_indexed_filenames,
+        get_page_documents,
+        get_retriever,
+        load_existing_vector_store,
+        retrieve_balanced_documents,
+    )
 
 
 def session_chroma_dir(session_id: str) -> str:
@@ -90,13 +112,29 @@ class AppSession:
 
     session_id: str
     messages: List[Dict[str, Any]] = field(default_factory=list)
-    memory: Any = field(default_factory=get_memory)
+    memory: Any = None
     chain: Any = None
     vector_store: Any = None
     indexed_files: List[str] = field(default_factory=list)
 
+    def ensure_memory(self) -> Any:
+        """Create conversation memory on first use."""
+        if self.memory is None:
+            self.memory = _get_memory()
+        return self.memory
+
     def rebuild_chain(self) -> None:
         """Rebuild the RAG chain from the current vector store."""
+        (
+            _clear,
+            _create,
+            get_indexed_filenames,
+            _get_page,
+            get_retriever,
+            _load,
+            _retrieve,
+        ) = _vector_store()
+        _, build_rag_chain, _ = _rag_chain()
         self.indexed_files = (
             get_indexed_filenames(self.vector_store)
             if self.vector_store
@@ -104,7 +142,7 @@ class AppSession:
         )
         if self.indexed_files:
             retriever = get_retriever(self.vector_store)
-            self.chain = build_rag_chain(retriever, self.memory)
+            self.chain = build_rag_chain(retriever, self.ensure_memory())
         else:
             self.chain = None
 
@@ -183,6 +221,17 @@ def index_stats(vector_store: Any) -> Dict[str, Any]:
 
 def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
     """Route a question through page-targeted or normal RAG retrieval."""
+    (
+        _clear,
+        _create,
+        get_indexed_filenames,
+        get_page_documents,
+        _get_retriever,
+        _load,
+        retrieve_balanced_documents,
+    ) = _vector_store()
+    answer_from_documents, _, query_chain = _rag_chain()
+
     ensure_session_vector_store(session)
     indexed_files = session.indexed_files or (
         get_indexed_filenames(session.vector_store)
@@ -198,7 +247,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
                 prompt, page_docs, vector_store=session.vector_store
             )
             try:
-                session.memory.save_context(
+                session.ensure_memory().save_context(
                     {"question": prompt}, {"answer": result["answer"]}
                 )
             except Exception:
@@ -222,7 +271,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
             prompt, overview_docs, vector_store=session.vector_store
         )
         try:
-            session.memory.save_context(
+            session.ensure_memory().save_context(
                 {"question": prompt}, {"answer": result["answer"]}
             )
         except Exception:
@@ -234,6 +283,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
 
 def create_session(session_id: Optional[str] = None) -> AppSession:
     """Create or restore a session, loading its persisted vector store."""
+    _, _, _, _, _, load_existing_vector_store, _ = _vector_store()
     sid = session_id or str(uuid.uuid4())
     persist_dir = session_chroma_dir(sid)
     vector_store = load_existing_vector_store(persist_dir)
@@ -245,6 +295,7 @@ def create_session(session_id: Optional[str] = None) -> AppSession:
 
 def ensure_session_vector_store(session: AppSession) -> None:
     """Load the session vector store from disk when it is not in memory."""
+    _, _, _, _, _, load_existing_vector_store, _ = _vector_store()
     if session.vector_store is None:
         session.vector_store = load_existing_vector_store(
             session_chroma_dir(session.session_id)
@@ -342,6 +393,15 @@ async def upload_pdfs(
     buffered_files = await buffer_fastapi_uploads(upload_files)
     valid_files, invalid_files = validate_api_pdf_files(buffered_files)
     ensure_session_vector_store(session)
+    (
+        _clear,
+        create_or_update_vector_store,
+        get_indexed_filenames,
+        _get_page,
+        _get_retriever,
+        _load,
+        _retrieve,
+    ) = _vector_store()
     already_indexed = (
         get_indexed_filenames(session.vector_store)
         if session.vector_store
@@ -454,7 +514,7 @@ def clear_chat(session_id: Optional[str] = None):
     """Clear chat history while keeping indexed PDFs."""
     session = get_session(session_id)
     session.messages = []
-    session.memory = get_memory()
+    session.ensure_memory()
     if session.chain is not None:
         session.chain.memory = session.memory
     return {"message": "Chat cleared.", "messages": []}
@@ -463,6 +523,15 @@ def clear_chat(session_id: Optional[str] = None):
 @app.post("/api/reset")
 def reset_session(session_id: Optional[str] = None):
     """Clear chat history and wipe the indexed knowledge base."""
+    (
+        clear_vector_store,
+        _create,
+        get_indexed_filenames,
+        _get_page,
+        _get_retriever,
+        _load,
+        _retrieve,
+    ) = _vector_store()
     from pdf_storage import delete_pdf
 
     session = get_session(session_id)
@@ -474,7 +543,7 @@ def reset_session(session_id: Optional[str] = None):
     if session_dir.exists():
         shutil.rmtree(session_dir, ignore_errors=True)
     session.messages = []
-    session.memory = get_memory()
+    session.memory = _get_memory()
     session.chain = None
     session.vector_store = None
     session.indexed_files = []
@@ -488,10 +557,14 @@ def reset_session(session_id: Optional[str] = None):
 @app.post("/api/source/preview")
 def source_preview(body: SourcePreviewRequest):
     """Return a PNG preview of a cited PDF page with highlights."""
+    from api_source_preview import render_source_preview_image
+
     return render_source_preview_image(body)
 
 
 @app.post("/api/source/download")
 def source_download(body: SourcePreviewRequest):
     """Download the highlighted single-page PDF for a citation."""
+    from api_source_preview import render_source_download
+
     return render_source_download(body)
