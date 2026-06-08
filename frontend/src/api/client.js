@@ -1,4 +1,10 @@
 const SESSION_KEY = 'mpdf_session_id'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+
+function apiUrl(path, sessionId) {
+  const url = `${API_BASE}${path}`
+  return sessionId ? `${url}?session_id=${encodeURIComponent(sessionId)}` : url
+}
 
 export function getSessionId() {
   return localStorage.getItem(SESSION_KEY)
@@ -10,8 +16,7 @@ export function setSessionId(id) {
 
 async function request(path, options = {}) {
   const sessionId = getSessionId()
-  const url = sessionId ? `${path}?session_id=${encodeURIComponent(sessionId)}` : path
-  const response = await fetch(url, options)
+  const response = await fetch(apiUrl(path, sessionId), options)
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     const detail = Array.isArray(data.detail)
@@ -68,8 +73,7 @@ export function resetSession() {
 
 async function sourceRequest(path, source) {
   const sessionId = getSessionId()
-  const url = sessionId ? `${path}?session_id=${encodeURIComponent(sessionId)}` : path
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(path, sessionId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(source),

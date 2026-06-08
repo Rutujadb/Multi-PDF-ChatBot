@@ -97,3 +97,22 @@ STREAMLIT_APP_URL = os.getenv(
     "STREAMLIT_APP_URL",
     "https://multi-pdf-chatbot-rb.streamlit.app/",
 )
+
+# Comma-separated deployed React origins for FastAPI CORS (e.g. Vercel URL).
+_LOCAL_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+)
+
+
+def get_cors_origins() -> list[str]:
+    """Return allowed browser origins for the FastAPI CORS middleware."""
+    origins = list(_LOCAL_CORS_ORIGINS)
+    extra = os.getenv("FRONTEND_ALLOWED_ORIGINS", "")
+    for origin in extra.split(","):
+        cleaned = origin.strip().rstrip("/")
+        if cleaned and cleaned not in origins:
+            origins.append(cleaned)
+    return origins

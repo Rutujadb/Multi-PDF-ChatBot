@@ -31,6 +31,7 @@ from config import (
     TOP_K_RESULTS,
     VECTOR_STORE,
     get_active_llm_name,
+    get_cors_origins,
 )
 from api_source_preview import SourcePreviewRequest, render_source_download, render_source_preview_image
 from api_upload import (
@@ -255,12 +256,7 @@ def ensure_session_vector_store(session: AppSession) -> None:
 app = FastAPI(title=f"{APP_NAME} API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
