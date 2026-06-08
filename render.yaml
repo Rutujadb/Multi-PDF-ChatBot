@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: multi-pdf-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.10.13"
+      - key: LLM_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_MODEL
+        value: google/gemma-2-9b-it:free
+      - key: VECTOR_STORE
+        value: chroma
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: FRONTEND_ALLOWED_ORIGINS
+        sync: false

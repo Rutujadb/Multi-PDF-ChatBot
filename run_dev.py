@@ -83,15 +83,40 @@ def ensure_python_deps(include_streamlit: bool = False) -> None:
 
 
 def verify_api_import() -> None:
-    """Ensure the FastAPI app can import before spawning uvicorn."""
-    try:
-        importlib.import_module("api")
-    except Exception as exc:
-        print("\nFailed to load api.py:")
-        print(f"  {exc}")
-        print("\nFix Python dependencies, then retry:")
-        print("  python -m pip install -r requirements.txt")
+    """Ensure api.py is present and syntactically valid without loading models."""
+    api_path = ROOT / "api.py"
+    if not api_path.is_file():
+        print(f"\nMissing {api_path}")
         sys.exit(1)
+    try:
+        compile(api_path.read_text(encoding="utf-8"), str(api_path), "exec")
+    except Exception as exc:
+        print("\nFailed to parse api.py:")
+        print(f"  {exc}")
+        sys.exit(1)
+
+
+def wait_for_api(timeout_seconds: int = 360) -> None:
+    """Block until the FastAPI health endpoint responds."""
+    import urllib.error
+    import urllib.request
+
+    url = "http://127.0.0.1:8000/api/health"
+    print(
+        "Waiting for API on http://localhost:8000 "
+        "(first request can take a few minutes while models load)…"
+    )
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                if response.status == 200:
+                    print("API is ready.")
+                    return
+        except (urllib.error.URLError, TimeoutError, OSError):
+            time.sleep(2)
+    print("\nAPI did not become ready in time. Check the API logs above for errors.")
+    sys.exit(1)
 
 
 def start_process(name: str, command: list[str], cwd: Path) -> subprocess.Popen:
@@ -118,15 +143,19 @@ def main() -> None:
         print("Installing frontend dependencies…")
         subprocess.run([npm, "install"], cwd=FRONTEND, check=True)
 
-    process_names = ["API", "React"]
+    process_names = ["API"]
     processes = [
         start_process(
             "API",
             [sys.executable, "-m", "uvicorn", "api:app", "--reload", "--port", "8000"],
             ROOT,
         ),
-        start_process("React", [npm, "run", "dev"], FRONTEND),
     ]
+
+    wait_for_api()
+
+    process_names.append("React")
+    processes.append(start_process("React", [npm, "run", "dev"], FRONTEND))
 
     if args.streamlit:
         process_names.append("Streamlit")

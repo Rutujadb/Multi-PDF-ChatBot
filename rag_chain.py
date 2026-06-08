@@ -27,6 +27,8 @@ from config import (
     GOOGLE_API_KEY,
     GEMINI_MODEL_NAME,
     OPENROUTER_API_KEY,
+    OPENROUTER_APP_NAME,
+    OPENROUTER_HTTP_REFERER,
     OPENROUTER_MODEL,
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
@@ -36,7 +38,7 @@ from citation_utils import ensure_page_label, is_refusal_answer, resolve_citatio
 
 
 def get_llm() -> BaseLanguageModel:
-    """Load the configured chat LLM (Gemini by default, or OpenRouter).
+    """Load the configured chat LLM (OpenRouter by default, or Gemini).
 
     The provider is selected by ``LLM_PROVIDER`` in ``config.py`` / ``.env``.
     API keys are read from configuration and never hardcoded.
@@ -45,14 +47,27 @@ def get_llm() -> BaseLanguageModel:
         A LangChain chat-model instance.
     """
     if LLM_PROVIDER == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY is not set. Add it to your .env file."
+            )
         return ChatOpenAI(
             api_key=OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             model=OPENROUTER_MODEL,
             temperature=LLM_TEMPERATURE,
             max_tokens=LLM_MAX_TOKENS,
+            default_headers={
+                "HTTP-Referer": OPENROUTER_HTTP_REFERER,
+                "X-Title": OPENROUTER_APP_NAME,
+            },
         )
 
+    if not GOOGLE_API_KEY:
+        raise ValueError(
+            "GOOGLE_API_KEY is not set. Add it to your .env file or set "
+            "LLM_PROVIDER=openrouter with OPENROUTER_API_KEY."
+        )
     return ChatGoogleGenerativeAI(
         model=GEMINI_MODEL_NAME,
         google_api_key=GOOGLE_API_KEY,
@@ -173,7 +188,11 @@ def query_chain(
         }
 
 
-def answer_from_documents(question: str, documents) -> Dict[str, Any]:
+def answer_from_documents(
+    question: str,
+    documents,
+    vector_store=None,
+) -> Dict[str, Any]:
     """Answer a question using an explicit set of documents (no retrieval).
 
     Used for page-targeted questions, where the relevant chunks are fetched by
@@ -212,7 +231,7 @@ def answer_from_documents(question: str, documents) -> Dict[str, Any]:
                 answer,
                 question,
                 labeled_docs,
-                vector_store=None,
+                vector_store=vector_store,
                 max_sources=CITATION_MAX_SOURCES,
             )
         return {"answer": answer, "source_documents": cited}
@@ -239,9 +258,12 @@ def _qa_template() -> str:
         "uploaded PDF documents. Base your answer only on the provided context "
         "below. Each excerpt is prefixed with its source as "
         "'[From <filename>, page <n>]', so you can refer to documents by their "
-        "filename and summarise each one. You may summarise and synthesise "
-        "across the context - for example, to describe the topics, themes, or "
-        "main points covered. Treat synonyms, abbreviations, and related phrasing "
+        "filename and summarise each one. When multiple documents appear in the "
+        "context and the question asks about each PDF, all PDFs, or a general "
+        "summary, provide a separate summary for every document filename you "
+        "see in the context. You may summarise and synthesise across the "
+        "context - for example, to describe the topics, themes, or main points "
+        "covered. Treat synonyms, abbreviations, and related phrasing "
         "as relevant (e.g. COVID, COVID-19, coronavirus). "
         "Only if the context contains nothing relevant to the question, reply "
         'exactly: "I don\'t have enough information in the uploaded documents '

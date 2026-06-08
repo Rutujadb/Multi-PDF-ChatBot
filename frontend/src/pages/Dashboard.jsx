@@ -8,6 +8,8 @@ import {
   sendChat,
   uploadPdfs,
 } from '../api/client.js'
+import { STREAMLIT_APP_URL } from '../config.js'
+import SourceViewerPanel from '../components/SourceViewerPanel.jsx'
 
 const COLOR_CLASSES = {
   brand: 'bg-brand-50 text-brand-600',
@@ -47,7 +49,7 @@ function Toast({ message, kind, onDone }) {
   )
 }
 
-function MessageBubble({ message }) {
+function MessageBubble({ message, onSourceClick }) {
   if (message.role === 'user') {
     return (
       <div className="fade-up flex justify-end mb-6">
@@ -79,14 +81,18 @@ function MessageBubble({ message }) {
           <div className="mt-3">
             <div className="label text-ink/50 mb-2">Sources retrieved</div>
             <div className="flex flex-wrap gap-2">
-              {message.sources.map((source) => (
-                <span
-                  key={`${source.file}-${source.page}`}
-                  className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-semibold ${COLOR_CLASSES[source.color] || COLOR_CLASSES.brand}`}
+              {message.sources.map((source, sourceIndex) => (
+                <button
+                  type="button"
+                  key={`${source.file}-${source.page}-${source.line || 0}-${sourceIndex}`}
+                  onClick={() => onSourceClick?.(source)}
+                  className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-semibold cursor-pointer transition-opacity hover:opacity-85 ${COLOR_CLASSES[source.color] || COLOR_CLASSES.brand}`}
+                  title="Open highlighted source preview"
                 >
                   <span className={`w-1.5 h-1.5 rounded-sm ${DOT_CLASSES[source.color] || DOT_CLASSES.brand}`} />
-                  {source.file} <span className="opacity-60">· p.{source.page}</span>
-                </span>
+                  {source.label || source.file}{' '}
+                  <span className="opacity-60">· p.{source.page}</span>
+                </button>
               ))}
             </div>
           </div>
@@ -107,8 +113,9 @@ export default function Dashboard() {
   const [processing, setProcessing] = useState(false)
   const [sending, setSending] = useState(false)
   const [toasts, setToasts] = useState([])
-  const [streamlitUrl, setStreamlitUrl] = useState('http://localhost:8501')
+  const [streamlitUrl, setStreamlitUrl] = useState(STREAMLIT_APP_URL)
   const [dropHover, setDropHover] = useState(false)
+  const [activeSource, setActiveSource] = useState(null)
   const messagesRef = useRef(null)
   const fileInputRef = useRef(null)
 
@@ -124,12 +131,12 @@ export default function Dashboard() {
   const refreshStatus = useCallback(async () => {
     const data = await fetchStatus()
     setIndexedFiles(data.indexed_files || [])
-    setStats(data.stats || stats)
+    setStats((prev) => data.stats || prev)
     setConfig(data.config || null)
     setMessages(data.messages || [])
     if (data.streamlit_url) setStreamlitUrl(data.streamlit_url)
     return data
-  }, [stats])
+  }, [])
 
   useEffect(() => {
     ensureSession()
@@ -154,7 +161,7 @@ export default function Dashboard() {
       const next = [...prev]
       pdfs.forEach((file) => {
         if (indexedFiles.some((f) => f.name === file.name)) {
-          pushToast(`${file.name} already indexed — skipped`, 'warn')
+          pushToast(`${file.name} already indexed - skipped`, 'warn')
           return
         }
         if (!next.some((p) => p.name === file.name)) next.push(file)
@@ -166,11 +173,26 @@ export default function Dashboard() {
   const processPending = async () => {
     if (pendingFiles.length === 0 || processing) return
     setProcessing(true)
+    const batch = [...pendingFiles]
     try {
-      const result = await uploadPdfs(pendingFiles)
-      setPendingFiles([])
+      const result = await uploadPdfs(batch)
+      const failed = new Set(result.failed || [])
+      const invalid = new Set(result.invalid || [])
+      const skipped = new Set(result.skipped || [])
+      setPendingFiles((prev) =>
+        prev.filter(
+          (file) =>
+            failed.has(file.name) ||
+            invalid.has(file.name) ||
+            (skipped.has(file.name) && !result.indexed_files?.some((f) => f.name === file.name))
+        )
+      )
+      if (result.indexed_files) {
+        setIndexedFiles(result.indexed_files)
+      }
       await refreshStatus()
-      pushToast(result.message || 'PDFs indexed', 'ok')
+      const hasWarnings = (result.failed?.length || 0) + (result.invalid?.length || 0) > 0
+      pushToast(result.message || 'PDFs indexed', hasWarnings ? 'warn' : 'ok')
     } catch (err) {
       pushToast(err.message, 'warn')
     } finally {
@@ -235,14 +257,14 @@ export default function Dashboard() {
 
   return (
     <div className="bg-muted text-ink antialiased h-screen overflow-hidden">
-      <div className="h-full flex flex-col">
+      <div className={`h-full flex flex-col transition-[margin] duration-300 ${activeSource ? 'mr-[50vw]' : ''}`}>
         <header className="bg-paper border-b border-line shrink-0">
           <div className="h-16 px-5 lg:px-8 flex items-center justify-between">
             <div className="flex items-center gap-5">
               <Logo compact />
               <span className="hidden md:inline-flex items-center gap-2 h-7 px-2.5 bg-emerald2-50 text-emerald2-600 rounded-md label">
                 <span className="w-1.5 h-1.5 bg-emerald2-500 rounded-sm" />
-                Connected · {config?.llm || 'gemini-2.0-flash'}
+                Connected · {config?.provider || 'openrouter'} · {config?.llm || 'openrouter'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -445,7 +467,11 @@ export default function Dashboard() {
                 </div>
               ) : (
                 messages.map((message, index) => (
-                  <MessageBubble key={`${message.role}-${index}`} message={message} />
+                  <MessageBubble
+                    key={`${message.role}-${index}`}
+                    message={message}
+                    onSourceClick={setActiveSource}
+                  />
                 ))
               )}
             </div>
@@ -505,6 +531,10 @@ export default function Dashboard() {
           </main>
         </div>
       </div>
+
+      {activeSource ? (
+        <SourceViewerPanel source={activeSource} onClose={() => setActiveSource(null)} />
+      ) : null}
 
       <div className="fixed bottom-6 right-6 space-y-2 z-50">
         {toasts.map((toast) => (

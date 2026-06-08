@@ -13,6 +13,36 @@ from citation_utils import best_excerpt_fragments, extract_answer_phrases
 
 _PAGE_RE = re.compile(r"page\s*(\d+)", re.IGNORECASE)
 
+_MULTI_DOC_OVERVIEW_PATTERNS = (
+    re.compile(r"\beach\s+(pdf|pdfs|document|documents|file|files)\b", re.I),
+    re.compile(r"\ball\s+(pdf|pdfs|document|documents|file|files)\b", re.I),
+    re.compile(r"\bevery\s+(pdf|pdfs|document|documents|file|files)\b", re.I),
+    re.compile(r"\bboth\s+(pdf|pdfs|document|documents|file|files)\b", re.I),
+    re.compile(r"^summar(?:y|ise|ize)(?:\s+all)?[.!?]?$", re.I),
+    re.compile(r"\bwhat\s+(?:is|are)\s+each\b", re.I),
+    re.compile(r"\btell\s+me\s+what\s+each\b", re.I),
+    re.compile(r"\boverview\s+of\s+(?:all|each|every)\b", re.I),
+    re.compile(r"\bwhat\s+(?:is|are)\s+(?:the\s+)?(?:pdf|pdfs|document|documents)\b", re.I),
+)
+
+
+def is_multi_document_overview(question: str, indexed_file_count: int) -> bool:
+    """Return True when the user is asking for a summary across all PDFs.
+
+    Args:
+        question: The user's question text.
+        indexed_file_count: Number of files currently indexed.
+
+    Returns:
+        ``True`` if the question should retrieve context from every indexed PDF.
+    """
+    if indexed_file_count < 2:
+        return False
+    text = (question or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _MULTI_DOC_OVERVIEW_PATTERNS)
+
 
 def parse_page_reference(
     question: str, indexed_files: List[str]

@@ -1,3 +1,0 @@
-- make the sources clickable. on clicking they should open the pdf as a modal comming from the right side of the screen and occupying the right half of the screen and the pdf opened with annotation highlighting the paragraph of the source. It should also have a close button to close the modal. 
-- Dark mode fix
-- Export button names to be changed to "Export .md" and "Export .txt".

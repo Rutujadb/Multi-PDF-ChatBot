@@ -60,49 +60,73 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     return _embeddings
 
 
-def create_or_update_vector_store(chunks: List[Document]) -> "Chroma":
+def _resolve_persist_dir(persist_dir: Optional[str] = None) -> str:
+    """Return the Chroma persist directory to use for a store operation."""
+    return persist_dir or CHROMA_PERSIST_DIR
+
+
+def create_or_update_vector_store(
+    chunks: List[Document],
+    persist_dir: Optional[str] = None,
+    existing_store: Optional["Chroma"] = None,
+) -> "Chroma":
     """Create a new ChromaDB store or add chunks to the existing one.
 
-    If a persisted store already exists at ``CHROMA_PERSIST_DIR`` the chunks are
+    If a persisted store already exists at the target directory the chunks are
     appended to it; otherwise a new collection is created. Data is written to
     disk so it survives application restarts.
 
     Args:
         chunks: List of chunked ``Document`` objects to embed and store.
+        persist_dir: Optional override for the Chroma persist directory.
+        existing_store: Optional open store to append chunks to in-process.
 
     Returns:
         The ``Chroma`` vector store instance containing the chunks.
     """
+    if existing_store is not None:
+        if chunks:
+            existing_store.add_documents(chunks)
+        return existing_store
+
+    target_dir = _resolve_persist_dir(persist_dir)
     embeddings = get_embeddings()  # load torch model before importing chromadb
     from langchain_chroma import Chroma
 
-    if os.path.exists(CHROMA_PERSIST_DIR):
+    if os.path.exists(target_dir):
         vector_store = Chroma(
             collection_name=CHROMA_COLLECTION_NAME,
             embedding_function=embeddings,
-            persist_directory=CHROMA_PERSIST_DIR,
+            persist_directory=target_dir,
         )
         if chunks:
             vector_store.add_documents(chunks)
     else:
+        os.makedirs(target_dir, exist_ok=True)
         vector_store = Chroma.from_documents(
             documents=chunks,
             embedding=embeddings,
             collection_name=CHROMA_COLLECTION_NAME,
-            persist_directory=CHROMA_PERSIST_DIR,
+            persist_directory=target_dir,
         )
 
     return vector_store
 
 
-def load_existing_vector_store() -> Optional["Chroma"]:
+def load_existing_vector_store(
+    persist_dir: Optional[str] = None,
+) -> Optional["Chroma"]:
     """Load a persisted ChromaDB vector store from disk if one exists.
 
+    Args:
+        persist_dir: Optional override for the Chroma persist directory.
+
     Returns:
-        A ``Chroma`` instance if ``CHROMA_PERSIST_DIR`` exists, otherwise
+        A ``Chroma`` instance if the persist directory exists, otherwise
         ``None`` (signalling that no PDFs have been indexed yet).
     """
-    if not os.path.exists(CHROMA_PERSIST_DIR):
+    target_dir = _resolve_persist_dir(persist_dir)
+    if not os.path.exists(target_dir):
         return None
 
     embeddings = get_embeddings()  # load torch model before importing chromadb
@@ -111,18 +135,116 @@ def load_existing_vector_store() -> Optional["Chroma"]:
     vector_store = Chroma(
         collection_name=CHROMA_COLLECTION_NAME,
         embedding_function=embeddings,
-        persist_directory=CHROMA_PERSIST_DIR,
+        persist_directory=target_dir,
     )
     return vector_store
 
 
-class _PageLabelRetriever(BaseRetriever):
-    """Inject 1-based ``page_label`` metadata on every retrieved chunk."""
+def _doc_dedup_key(doc: Document) -> tuple:
+    """Build a deduplication key for a retrieved chunk."""
+    meta = doc.metadata or {}
+    return (
+        meta.get("source"),
+        meta.get("page"),
+        meta.get("start_index"),
+        (doc.page_content or "")[:100],
+    )
 
-    def __init__(self, base_retriever: BaseRetriever):
-        """Wrap an existing retriever."""
+
+def _similarity_search_for_file(
+    vector_store: "Chroma",
+    query: str,
+    filename: str,
+    k: int,
+) -> List[Document]:
+    """Run similarity search scoped to a single source PDF."""
+    try:
+        return vector_store.similarity_search(
+            query,
+            k=k,
+            filter={"source": filename},
+        )
+    except Exception:
+        broad_k = max(k * 4, TOP_K_RESULTS)
+        results = vector_store.similarity_search(query, k=broad_k)
+        matched = [
+            doc for doc in results if (doc.metadata or {}).get("source") == filename
+        ]
+        return matched[:k]
+
+
+def retrieve_balanced_documents(
+    vector_store: "Chroma",
+    query: str,
+    *,
+    global_k: int | None = None,
+    per_file_k: int | None = None,
+) -> List[Document]:
+    """Retrieve chunks so every indexed PDF is represented in context.
+
+    Plain top-k similarity often returns chunks from only one large PDF. This
+    merges per-file matches with global matches so multi-PDF questions can
+    synthesise across all uploads.
+
+    Args:
+        vector_store: A ``Chroma`` vector store instance.
+        query: The user's question (or a summary-oriented fallback).
+        global_k: Number of global top matches to include.
+        per_file_k: Number of matches to pull from each indexed file.
+
+    Returns:
+        Deduplicated list of ``Document`` chunks with ``page_label`` set.
+    """
+    if vector_store is None:
+        return []
+
+    filenames = sorted(get_indexed_filenames(vector_store))
+    if not filenames:
+        return []
+
+    search_query = (query or "").strip() or (
+        "summary overview main topics introduction purpose"
+    )
+    global_k = global_k if global_k is not None else TOP_K_RESULTS
+
+    if len(filenames) == 1:
+        return [
+            ensure_page_label(doc)
+            for doc in vector_store.similarity_search(search_query, k=global_k)
+        ]
+
+    if per_file_k is None:
+        per_file_k = 1 if len(filenames) > 4 else 2
+
+    merged: List[Document] = []
+    seen: set = set()
+
+    def _add_docs(docs: List[Document]) -> None:
+        for doc in docs:
+            key = _doc_dedup_key(doc)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(ensure_page_label(doc))
+
+    for filename in filenames:
+        _add_docs(
+            _similarity_search_for_file(
+                vector_store, search_query, filename, per_file_k
+            )
+        )
+
+    _add_docs(vector_store.similarity_search(search_query, k=global_k))
+    return merged
+
+
+class _BalancedRetriever(BaseRetriever):
+    """Retriever that balances similarity results across indexed PDFs."""
+
+    def __init__(self, vector_store: "Chroma"):
+        """Wrap a vector store for balanced multi-PDF retrieval."""
         super().__init__()
-        self._base_retriever = base_retriever
+        self._vector_store = vector_store
 
     def _get_relevant_documents(
         self,
@@ -130,26 +252,21 @@ class _PageLabelRetriever(BaseRetriever):
         *,
         run_manager: CallbackManagerForRetrieverRun | None = None,
     ) -> List[Document]:
-        """Retrieve documents and normalize page labels for citation display."""
-        docs = self._base_retriever.invoke(query)
-        return [ensure_page_label(doc) for doc in docs]
+        """Retrieve documents with per-file coverage."""
+        return retrieve_balanced_documents(self._vector_store, query)
 
 
 def get_retriever(vector_store: "Chroma") -> BaseRetriever:
-    """Create a similarity-search retriever from the vector store.
+    """Create a balanced similarity retriever from the vector store.
 
     Args:
         vector_store: A ``Chroma`` vector store instance.
 
     Returns:
-        A retriever configured to return the top-``TOP_K_RESULTS`` most similar
-        chunks for a query.
+        A retriever that returns globally relevant chunks while ensuring each
+        indexed PDF contributes at least some context.
     """
-    retriever = vector_store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": TOP_K_RESULTS},
-    )
-    return _PageLabelRetriever(retriever)
+    return _BalancedRetriever(vector_store)
 
 
 def clear_vector_store(vector_store: "Chroma") -> bool:
