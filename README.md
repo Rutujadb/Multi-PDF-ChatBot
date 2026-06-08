@@ -20,7 +20,7 @@
 
 | UI | URL | Notes |
 |---|---|---|
-| **Streamlit (classic)** | [multi-pdf-chatbot-rb.streamlit.app](https://multi-pdf-chatbot-rb.streamlit.app/) | Fully hosted PoC — upload, chat, and source preview in the browser |
+| **Streamlit (classic)** | [multi-pdf-chatbot-rb.streamlit.app](https://multi-pdf-chatbot-rb.streamlit.app/) | Fully hosted PoC - upload, chat, and source preview in the browser |
 | **React + FastAPI** | `<!-- TODO: add React deploy URL -->` _Coming soon_ | React dashboard requires the FastAPI backend; use [local dev](#react-ui--fastapi-recommended) until deployed |
 | **GitHub repo** | [github.com/Rutujadb/Multi-PDF-ChatBot](https://github.com/Rutujadb/Multi-PDF-ChatBot) | Source code, issues, and contributions |
 
@@ -34,7 +34,7 @@
 - Ask natural-language questions answered from PDF content only
 - See which PDF and page each answer came from (source citations)
 - Click a source chip to open a highlighted PDF preview (React UI)
-- Hold a context-aware conversation — follow-up questions understand prior turns
+- Hold a context-aware conversation - follow-up questions understand prior turns
 - Clear chat or reset the session at any time
 
 ---
@@ -43,7 +43,7 @@
 
 ### React UI
 
-| Landing page | Dashboard — upload & index |
+| Landing page | Dashboard - upload & index |
 |:---:|:---:|
 | ![Landing page](docs/screenshots/react-landing.png) | ![Dashboard upload](docs/screenshots/react-upload.png) |
 
@@ -72,7 +72,7 @@
 | Layer | Technology |
 |---|---|
 | UI | React + Vite + Tailwind (landing + dashboard), Streamlit (classic alt) |
-| API | FastAPI (`api.py`) — wraps the LangChain pipeline for React |
+| API | FastAPI (`api.py`) - wraps the LangChain pipeline for React |
 | Orchestration | LangChain + `langchain-classic` (`ConversationalRetrievalChain`) |
 | PDF parsing | PyPDFLoader / pypdf |
 | Embeddings (local) | HuggingFace `all-MiniLM-L6-v2` (384-dim, CPU) |
@@ -137,12 +137,12 @@ flowchart TB
     B -->|valid| C{Deduplicate by filename}
     C -->|already indexed| Y[Skip duplicate]
     C -->|new file| D[Save raw PDF to uploaded_pdfs/]
-    D --> E[PyPDFLoader — extract text per page]
+    D --> E[PyPDFLoader - extract text per page]
     E --> F[Tag metadata: source, page]
     F --> G[RecursiveCharacterTextSplitter\n500 chars / 50 overlap]
     G --> H[Enrich metadata:\nline, start_index, page_label]
     H --> I[HuggingFace embeddings\nall-MiniLM-L6-v2]
-    I --> J[ChromaDB — append chunks]
+    I --> J[ChromaDB - append chunks]
     J --> K[Rebuild ConversationalRetrievalChain]
     K --> L[Ready for chat]
 ```
@@ -151,13 +151,13 @@ flowchart TB
 |---|---|---|
 | Upload | `api_upload.py` / `app.py` | React uses FastAPI `UploadFile`; Streamlit uses `st.file_uploader` |
 | Validation | `utils.py` | PDF extension + non-empty file check |
-| Dedup | `filter_new_files()` | Filename match against indexed sources — no re-embedding |
+| Dedup | `filter_new_files()` | Filename match against indexed sources - no re-embedding |
 | Persist PDF | `pdf_storage.py` | `uploaded_pdfs/{filename}` for source preview |
 | Extract | `pdf_processor.py` | Temp file → PyPDFLoader → one `Document` per page |
 | Chunk | `pdf_processor.py` | Split **per page** so `line` metadata is accurate |
 | Embed | `vector_store.py` | Local model, no API key; torch loaded before chromadb (Windows safety) |
 | Store | `vector_store.py` | Streamlit: `./chroma_db/` · React API: `./chroma_db/api_sessions/{session_id}/` |
-| Index mode | `create_or_update_vector_store()` | **Append** — new PDFs accumulate, old ones are kept |
+| Index mode | `create_or_update_vector_store()` | **Append** - new PDFs accumulate, old ones are kept |
 
 **Chunk metadata (every stored vector):**
 
@@ -199,11 +199,11 @@ flowchart TB
 
 | Route | Trigger | Retrieval strategy |
 |---|---|---|
-| **Page-targeted** | `"page 7 of report.pdf"` | `get_page_documents()` — all chunks on that page |
+| **Page-targeted** | `"page 7 of report.pdf"` | `get_page_documents()` - all chunks on that page |
 | **Multi-doc overview** | `"summarise"`, `"what each pdf is about"` | `retrieve_balanced_documents(per_file_k=4)` → `answer_from_documents()` |
 | **Default Q&A** | Everything else | `ConversationalRetrievalChain` with **balanced retriever** |
 
-**Balanced retrieval** (`retrieve_balanced_documents`) — the core fix for multi-PDF:
+**Balanced retrieval** (`retrieve_balanced_documents`) - the core fix for multi-PDF:
 
 1. For each indexed filename, run similarity search scoped to that file (`filter: {source: filename}`)
 2. Merge with global top-k results
@@ -230,7 +230,7 @@ This prevents one large PDF from filling all retrieval slots.
 | **Dual UI** | React + Streamlit | React matches design system; Streamlit is quick to deploy on Community Cloud |
 | **API layer** | FastAPI for React only | Keeps Streamlit self-contained; shared Python modules unchanged |
 | **Per-session Chroma (React)** | `chroma_db/api_sessions/{id}/` | Isolates sessions; survives API restart when `session_id` is restored |
-| **Balanced retrieval** | Per-file + global merge | Plain top-k failed on multi-PDF — one document dominated results |
+| **Balanced retrieval** | Per-file + global merge | Plain top-k failed on multi-PDF - one document dominated results |
 | **Overview routing** | Regex intent detection | `"summarise"` and `"each pdf"` need guaranteed per-file context |
 | **Citation diversity** | Per-PDF minimum in UI | Answer could mention 2 PDFs while sources showed only 1 |
 | **PDF on disk** | `uploaded_pdfs/` | Enables PyMuPDF highlight preview; vectors alone are not enough |
@@ -241,17 +241,17 @@ This prevents one large PDF from filling all retrieval slots.
 
 ### Thinking approach
 
-1. **Start with the simplest correct pipeline** — single PDF, top-k retrieval, one UI (Streamlit). Prove upload → embed → chat → cite works end-to-end.
+1. **Start with the simplest correct pipeline** - single PDF, top-k retrieval, one UI (Streamlit). Prove upload → embed → chat → cite works end-to-end.
 
-2. **Separate concerns early** — `pdf_processor`, `vector_store`, `rag_chain`, `citation_utils` each own one stage. UI layers (Streamlit vs React API) call the same core, not duplicate logic.
+2. **Separate concerns early** - `pdf_processor`, `vector_store`, `rag_chain`, `citation_utils` each own one stage. UI layers (Streamlit vs React API) call the same core, not duplicate logic.
 
-3. **Observe failures, then fix the right layer** — Multi-PDF bugs looked like indexing issues but were actually **retrieval skew** (large PDF wins similarity) and **citation filtering** (answer mentioned 2 files, UI showed 1). Fixing storage alone did not help.
+3. **Observe failures, then fix the right layer** - Multi-PDF bugs looked like indexing issues but were actually **retrieval skew** (large PDF wins similarity) and **citation filtering** (answer mentioned 2 files, UI showed 1). Fixing storage alone did not help.
 
-4. **Metadata is a product feature** — `source`, `page`, `line`, and `highlight_phrases` power trust: users can verify answers. Invest in metadata at ingestion time.
+4. **Metadata is a product feature** - `source`, `page`, `line`, and `highlight_phrases` power trust: users can verify answers. Invest in metadata at ingestion time.
 
-5. **Route by intent, not one retrieval path** — Page questions, overview questions, and specific Q&A need different retrieval strategies. A single `top_k=6` path cannot serve all three well.
+5. **Route by intent, not one retrieval path** - Page questions, overview questions, and specific Q&A need different retrieval strategies. A single `top_k=6` path cannot serve all three well.
 
-6. **Deploy constraints shape UX** — Streamlit Cloud cannot show PDF iframes reliably; PNG preview was the pragmatic fix. React can use a richer side panel with blob URLs.
+6. **Deploy constraints shape UX** - Streamlit Cloud cannot show PDF iframes reliably; PNG preview was the pragmatic fix. React can use a richer side panel with blob URLs.
 
 ---
 
@@ -263,7 +263,7 @@ This prevents one large PDF from filling all retrieval slots.
 - **Incremental indexing must append, not replace.** `create_or_update_vector_store` with `existing_store` avoids losing prior PDFs on new uploads.
 - **Chunk size trades off retrieval vs context window.** 500-char chunks work for Q&A; overview questions benefit from more chunks per file (4+).
 - **Local embeddings + remote LLM is a practical split.** Embeddings are free and private; only generation needs an API key.
-- **Filename dedup is simple but effective.** Re-uploading the same filename is skipped — good for UX, but users must rename files to re-index changed content.
+- **Filename dedup is simple but effective.** Re-uploading the same filename is skipped - good for UX, but users must rename files to re-index changed content.
 
 ---
 
@@ -271,7 +271,7 @@ This prevents one large PDF from filling all retrieval slots.
 
 - Python 3.10+
 - Node.js 18+ (React UI only)
-- An LLM API key — [OpenRouter](https://openrouter.ai/) or [Google AI Studio](https://aistudio.google.com)
+- An LLM API key - [OpenRouter](https://openrouter.ai/) or [Google AI Studio](https://aistudio.google.com)
 - Internet for LLM calls and the one-time embedding model download (~90 MB)
 
 ## Installation
@@ -306,7 +306,7 @@ VECTOR_STORE=chroma
 STREAMLIT_APP_URL=https://multi-pdf-chatbot-rb.streamlit.app/
 ```
 
-> **Never commit `.env`** — it is git-ignored.
+> **Never commit `.env`** - it is git-ignored.
 
 ## Running locally
 
@@ -341,7 +341,7 @@ streamlit run app.py
 
 1. Open http://localhost:5173/dashboard
 2. Drop PDFs in the sidebar → **Process PDFs**
-3. Ask a question — sources appear as clickable chips
+3. Ask a question - sources appear as clickable chips
 4. Click a source to open the highlighted PDF preview panel
 5. **Clear chat** keeps indexed PDFs · **Reset session** wipes everything
 
@@ -379,15 +379,15 @@ multi-pdf-chatbot/
 
 ## Known limitations
 
-- **Single-user / localhost** — not designed for concurrent multi-user production load
-- **Text-based PDFs only** — scanned image-only PDFs are not supported (no OCR)
-- **Chat history is session-scoped** — lost on browser refresh (indexed vectors persist on disk)
+- **Single-user / localhost** - not designed for concurrent multi-user production load
+- **Text-based PDFs only** - scanned image-only PDFs are not supported (no OCR)
+- **Chat history is session-scoped** - lost on browser refresh (indexed vectors persist on disk)
 - **LLM rate limits** apply per provider (OpenRouter / Gemini free tiers)
-- **React deploy** requires a hosted FastAPI backend — static frontend alone cannot chat
+- **React deploy** requires a hosted FastAPI backend - static frontend alone cannot chat
 
 ## Future scope
 
-- **OCR for scanned documents** — support image-only PDFs by extracting text from scans before chunking and indexing
+- **OCR for scanned documents** - support image-only PDFs by extracting text from scans before chunking and indexing
 - **Real-time suggested follow-ups**
   - After each answer, generate contextual follow-up questions from the user's question and the assistant's response
   - When chat is empty but PDFs are indexed, generate starter questions from the processed document index (topics and content across uploaded files)
