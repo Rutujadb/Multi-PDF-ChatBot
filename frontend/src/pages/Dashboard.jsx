@@ -8,6 +8,7 @@ import {
   sendChat,
   uploadPdfs,
 } from '../api/client.js'
+import { STREAMLIT_APP_URL } from '../config.js'
 
 const COLOR_CLASSES = {
   brand: 'bg-brand-50 text-brand-600',
@@ -107,7 +108,7 @@ export default function Dashboard() {
   const [processing, setProcessing] = useState(false)
   const [sending, setSending] = useState(false)
   const [toasts, setToasts] = useState([])
-  const [streamlitUrl, setStreamlitUrl] = useState('http://localhost:8501')
+  const [streamlitUrl, setStreamlitUrl] = useState(STREAMLIT_APP_URL)
   const [dropHover, setDropHover] = useState(false)
   const messagesRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -124,12 +125,12 @@ export default function Dashboard() {
   const refreshStatus = useCallback(async () => {
     const data = await fetchStatus()
     setIndexedFiles(data.indexed_files || [])
-    setStats(data.stats || stats)
+    setStats((prev) => data.stats || prev)
     setConfig(data.config || null)
     setMessages(data.messages || [])
     if (data.streamlit_url) setStreamlitUrl(data.streamlit_url)
     return data
-  }, [stats])
+  }, [])
 
   useEffect(() => {
     ensureSession()
@@ -242,7 +243,7 @@ export default function Dashboard() {
               <Logo compact />
               <span className="hidden md:inline-flex items-center gap-2 h-7 px-2.5 bg-emerald2-50 text-emerald2-600 rounded-md label">
                 <span className="w-1.5 h-1.5 bg-emerald2-500 rounded-sm" />
-                Connected · {config?.llm || 'gemini-2.0-flash'}
+                Connected · {config?.provider || 'openrouter'} · {config?.llm || 'openrouter'}
               </span>
             </div>
             <div className="flex items-center gap-2">

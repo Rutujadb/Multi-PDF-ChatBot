@@ -21,20 +21,28 @@ from config import (
     APP_NAME,
     EMBEDDING_MODEL_NAME,
     EXAMPLE_QUESTIONS,
-    GEMINI_MODEL_NAME,
     LLM_MAX_TOKENS,
+    LLM_PROVIDER,
     LLM_TEMPERATURE,
+    STREAMLIT_APP_URL,
     TOP_K_RESULTS,
     VECTOR_STORE,
+    get_active_llm_name,
 )
-from pdf_processor import filter_new_files, load_pdfs, split_documents
+from api_upload import (
+    buffer_fastapi_uploads,
+    filter_new_api_files,
+    load_buffered_pdfs,
+    validate_api_pdf_files,
+)
+from pdf_processor import split_documents
 from rag_chain import (
     answer_from_documents,
     build_rag_chain,
     get_memory,
     query_chain,
 )
-from utils import format_sources, parse_page_reference, validate_pdf_files
+from utils import format_sources, parse_page_reference
 from vector_store import (
     clear_vector_store,
     create_or_update_vector_store,
@@ -45,7 +53,7 @@ from vector_store import (
 )
 
 SOURCE_COLORS = ("brand", "emerald2", "amber2")
-STREAMLIT_URL = "http://localhost:8501"
+STREAMLIT_URL = STREAMLIT_APP_URL
 
 
 @dataclass
@@ -193,15 +201,23 @@ app.add_middleware(
 )
 
 _sessions: Dict[str, AppSession] = {}
-_default_session = create_session()
-_sessions[_default_session.session_id] = _default_session
+_default_session: Optional[AppSession] = None
+
+
+def get_or_create_default_session() -> AppSession:
+    """Return the singleton default session, creating it on first use."""
+    global _default_session
+    if _default_session is None:
+        _default_session = create_session()
+        _sessions[_default_session.session_id] = _default_session
+    return _default_session
 
 
 def get_session(session_id: Optional[str] = None) -> AppSession:
     """Return an existing session or fall back to the default one."""
     if session_id and session_id in _sessions:
         return _sessions[session_id]
-    return _default_session
+    return get_or_create_default_session()
 
 
 @app.get("/api/health")
@@ -233,7 +249,8 @@ def get_status(session_id: Optional[str] = None):
             "top_k": TOP_K_RESULTS,
         },
         "config": {
-            "llm": GEMINI_MODEL_NAME,
+            "llm": get_active_llm_name(),
+            "provider": LLM_PROVIDER,
             "store": VECTOR_STORE,
             "embeddings": EMBEDDING_MODEL_NAME,
             "temperature": LLM_TEMPERATURE,
@@ -256,8 +273,9 @@ async def upload_pdfs(
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
-    valid_files, invalid_files = validate_pdf_files(files)
-    new_files, skipped = filter_new_files(valid_files, session.indexed_files)
+    buffered_files = await buffer_fastapi_uploads(files)
+    valid_files, invalid_files = validate_api_pdf_files(buffered_files)
+    new_files, skipped = filter_new_api_files(valid_files, session.indexed_files)
 
     if not new_files and not invalid_files and skipped:
         return {
@@ -275,10 +293,7 @@ async def upload_pdfs(
             "invalid": invalid_files,
         }
 
-    for upload in new_files:
-        await upload.seek(0)
-
-    documents, failed = load_pdfs(new_files)
+    documents, failed = load_buffered_pdfs(new_files)
     if failed:
         pass
     if not documents:

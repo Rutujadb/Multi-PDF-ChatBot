@@ -27,6 +27,8 @@ from config import (
     GOOGLE_API_KEY,
     GEMINI_MODEL_NAME,
     OPENROUTER_API_KEY,
+    OPENROUTER_APP_NAME,
+    OPENROUTER_HTTP_REFERER,
     OPENROUTER_MODEL,
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
@@ -36,7 +38,7 @@ from citation_utils import ensure_page_label, is_refusal_answer, resolve_citatio
 
 
 def get_llm() -> BaseLanguageModel:
-    """Load the configured chat LLM (Gemini by default, or OpenRouter).
+    """Load the configured chat LLM (OpenRouter by default, or Gemini).
 
     The provider is selected by ``LLM_PROVIDER`` in ``config.py`` / ``.env``.
     API keys are read from configuration and never hardcoded.
@@ -45,14 +47,27 @@ def get_llm() -> BaseLanguageModel:
         A LangChain chat-model instance.
     """
     if LLM_PROVIDER == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY is not set. Add it to your .env file."
+            )
         return ChatOpenAI(
             api_key=OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
             model=OPENROUTER_MODEL,
             temperature=LLM_TEMPERATURE,
             max_tokens=LLM_MAX_TOKENS,
+            default_headers={
+                "HTTP-Referer": OPENROUTER_HTTP_REFERER,
+                "X-Title": OPENROUTER_APP_NAME,
+            },
         )
 
+    if not GOOGLE_API_KEY:
+        raise ValueError(
+            "GOOGLE_API_KEY is not set. Add it to your .env file or set "
+            "LLM_PROVIDER=openrouter with OPENROUTER_API_KEY."
+        )
     return ChatGoogleGenerativeAI(
         model=GEMINI_MODEL_NAME,
         google_api_key=GOOGLE_API_KEY,
