@@ -214,6 +214,12 @@ The system prompt (`SYSTEM_PROMPT_TEMPLATE` in `config.py`) instructs the LLM to
 
 when context is irrelevant. This reduces hallucination outside uploaded content.
 
+### LLM sampling defaults
+
+- `top_p = 0.85` keeps output natural while cutting low-probability random words.
+- `top_k = 40` is a widely used default that balances variety and focus.
+- This `top_k` is **decoding top-k**, not retrieval `TOP_K_RESULTS` in `config.py`.
+
 ---
 
 ## 6. Design decisions
@@ -232,6 +238,7 @@ when context is irrelevant. This reduces hallucination outside uploaded content.
 | Citation diversity | Per-PDF minimum in UI | Raw top retrieved | Answer could cite 2 PDFs while UI showed 1 |
 | PDF on disk | `uploaded_pdfs/` | Vectors only | PyMuPDF highlight preview needs the raw file |
 | LLM provider | OpenRouter default | Gemini only | Flexible model choice; free-tier models available |
+| LLM sampling | `top_p=0.85`, `top_k=40` | Provider defaults | Reduces odd word choices while preserving natural variation |
 | Source preview (Streamlit Cloud) | PNG not iframe PDF | Embedded PDF viewer | Chrome blocks PDF iframes on Streamlit Cloud |
 | Lazy imports (API) | Deferred torch/LangChain load | Eager import at startup | Render free tier (512 MB) OOM on cold start |
 

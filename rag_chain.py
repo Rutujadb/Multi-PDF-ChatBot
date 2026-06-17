@@ -32,6 +32,8 @@ from config import (
     OPENROUTER_MODEL,
     LLM_TEMPERATURE,
     LLM_MAX_TOKENS,
+    LLM_TOP_P,
+    LLM_TOP_K,
     CITATION_MAX_SOURCES,
 )
 from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
@@ -57,6 +59,9 @@ def get_llm() -> BaseLanguageModel:
             model=OPENROUTER_MODEL,
             temperature=LLM_TEMPERATURE,
             max_tokens=LLM_MAX_TOKENS,
+            model_kwargs={
+                "top_p": LLM_TOP_P,
+            },
             default_headers={
                 "HTTP-Referer": OPENROUTER_HTTP_REFERER,
                 "X-Title": OPENROUTER_APP_NAME,
@@ -72,6 +77,8 @@ def get_llm() -> BaseLanguageModel:
         model=GEMINI_MODEL_NAME,
         google_api_key=GOOGLE_API_KEY,
         temperature=LLM_TEMPERATURE,
+        top_p=LLM_TOP_P,
+        top_k=LLM_TOP_K,
         max_output_tokens=LLM_MAX_TOKENS,
     )
 

@@ -219,6 +219,12 @@ This prevents one large PDF from filling all retrieval slots.
 - When the answer mentions multiple PDFs, ensures **at least one citation per file**
 - React source panel: `POST /api/source/preview` → PNG with yellow highlights; download annotated PDF
 
+**LLM sampling defaults**:
+
+- `top_p = 0.85` cuts weird/random low-probability words while keeping natural phrasing.
+- `top_k = 40` is an industry-standard default for balancing variety and focus.
+- This is decoding `top_k`, separate from retrieval top-k used for document search.
+
 ---
 
 ### Design decisions
@@ -237,6 +243,7 @@ This prevents one large PDF from filling all retrieval slots.
 | **Citation diversity** | Per-PDF minimum in UI | Answer could mention 2 PDFs while sources showed only 1 |
 | **PDF on disk** | `uploaded_pdfs/` | Enables PyMuPDF highlight preview; vectors alone are not enough |
 | **LLM grounding** | Strict refusal phrase | Prevents hallucination outside uploaded content |
+| **LLM sampling** | `top_p=0.85`, `top_k=40` | Keeps language natural while reducing random token choices |
 | **Source preview (Streamlit Cloud)** | PNG not iframe PDF | Chrome blocks PDF iframes on Streamlit Cloud |
 
 ---

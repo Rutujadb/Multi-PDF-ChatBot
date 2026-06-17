@@ -25,7 +25,7 @@ Multi-PDF ChatBot lets you:
 
 | Interface | URL | Best for |
 |-----------|-----|----------|
-| **React UI (recommended)** | https://multi-pdf-chat-bot.vercel.app/ | Modern dashboard, source preview side panel |
+| **React UI** | https://multi-pdf-chat-bot.vercel.app/ | Modern dashboard, source preview side panel |
 | **Streamlit classic** | https://multi-pdf-chatbot-rb.streamlit.app/ | Simple sidebar upload and chat |
 
 Both interfaces answer from the same RAG technology. The React UI connects to a separate API backend and offers a richer source viewer.
