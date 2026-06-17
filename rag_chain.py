@@ -34,6 +34,8 @@ from config import (
     LLM_MAX_TOKENS,
     LLM_TOP_P,
     LLM_TOP_K,
+    LLM_REPETITION_PENALTY,
+    LLM_FREQUENCY_PENALTY,
     CITATION_MAX_SOURCES,
 )
 from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
@@ -61,6 +63,7 @@ def get_llm() -> BaseLanguageModel:
             max_tokens=LLM_MAX_TOKENS,
             model_kwargs={
                 "top_p": LLM_TOP_P,
+                "frequency_penalty": LLM_FREQUENCY_PENALTY,
             },
             default_headers={
                 "HTTP-Referer": OPENROUTER_HTTP_REFERER,
