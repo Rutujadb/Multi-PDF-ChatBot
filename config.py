@@ -33,6 +33,8 @@ LLM_TEMPERATURE = 0.3
 LLM_MAX_TOKENS = 1024
 LLM_TOP_P = float(os.getenv("LLM_TOP_P", "0.85"))
 LLM_TOP_K = int(os.getenv("LLM_TOP_K", "40"))
+LLM_REPETITION_PENALTY = float(os.getenv("LLM_REPETITION_PENALTY", "1.2"))
+LLM_FREQUENCY_PENALTY = float(os.getenv("LLM_FREQUENCY_PENALTY", "0.3"))
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
