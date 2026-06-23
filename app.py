@@ -225,10 +225,8 @@ def rebuild_chain():
 def _apply_selected_model(label: str) -> None:
     """Persist the selected model option and rebuild the chain if needed."""
     options = get_available_llm_options()
-    selected = next(
-        (option for option in options if option["label"] == label),
-        None,
-    )
+    options_by_label = {option["label"]: option for option in options}
+    selected = options_by_label.get(label)
     if selected is None:
         return
 
@@ -346,8 +344,9 @@ def render_sidebar():
         model_options = get_available_llm_options()
         if model_options:
             labels = [option["label"] for option in model_options]
+            label_set = set(labels)
             current_label = st.session_state.get("selected_llm_label", labels[0])
-            if current_label not in labels:
+            if current_label not in label_set:
                 current_label = labels[0]
             selected_label = st.selectbox(
                 "Models",

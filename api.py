@@ -281,7 +281,7 @@ def existing_doc_references(
     """Return indexed-file references matching the given filenames."""
     by_name = {item.get("name"): item for item in indexed_files}
     references: List[Dict[str, Any]] = []
-    for filename in filenames:
+    for filename in dict.fromkeys(filenames):
         item = by_name.get(filename)
         if item:
             references.append(item)
@@ -490,14 +490,10 @@ def set_active_model(body: ModelSelectionRequest, session_id: Optional[str] = No
     """Update the active provider/model for one API session."""
     session = get_session(session_id)
     available = get_available_llm_options()
-    selected = next(
-        (
-            option
-            for option in available
-            if option["provider"] == body.provider and option["model"] == body.model
-        ),
-        None,
-    )
+    available_by_key = {
+        (option["provider"], option["model"]): option for option in available
+    }
+    selected = available_by_key.get((body.provider, body.model))
     if selected is None:
         raise HTTPException(status_code=400, detail="Selected model is not available.")
 

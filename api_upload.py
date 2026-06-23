@@ -57,13 +57,13 @@ def validate_api_pdf_files(
 ) -> Tuple[List[BufferedPdfUpload], List[str]]:
     """Split API uploads into valid PDFs and invalid filenames."""
     valid: List[BufferedPdfUpload] = []
-    invalid: List[str] = []
+    invalid: set[str] = set()
     for upload in uploaded_files:
         if upload.name.lower().endswith(".pdf") and upload.size > 0:
             valid.append(upload)
         else:
-            invalid.append(upload.name)
-    return valid, invalid
+            invalid.add(upload.name)
+    return valid, list(invalid)
 
 
 def filter_new_api_files(
@@ -72,15 +72,15 @@ def filter_new_api_files(
 ) -> Tuple[List[BufferedPdfUpload], List[str]]:
     """Return API uploads that are not already indexed."""
     new_files: List[BufferedPdfUpload] = []
-    skipped: List[str] = []
+    skipped: set[str] = set()
     seen_names = set(already_indexed)
     for upload in uploaded_files:
         if upload.name in seen_names:
-            skipped.append(upload.name)
+            skipped.add(upload.name)
         else:
             new_files.append(upload)
             seen_names.add(upload.name)
-    return new_files, skipped
+    return new_files, list(skipped)
 
 
 def load_buffered_pdfs(
@@ -88,7 +88,7 @@ def load_buffered_pdfs(
 ) -> Tuple[List[Document], List[str]]:
     """Load and extract text from buffered API PDF uploads."""
     all_documents: List[Document] = []
-    failed_files: List[str] = []
+    failed_files: set[str] = set()
 
     for uploaded_file in uploaded_files:
         tmp_path = None
@@ -107,9 +107,9 @@ def load_buffered_pdfs(
 
             all_documents.extend(documents)
         except Exception:
-            failed_files.append(uploaded_file.name)
+            failed_files.add(uploaded_file.name)
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
-    return all_documents, failed_files
+    return all_documents, list(failed_files)

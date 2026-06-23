@@ -135,9 +135,12 @@ def get_default_llm_option() -> dict[str, str]:
     """Return the default UI selection for the active provider/model."""
     options = get_available_llm_options()
     active_model = get_active_llm_name()
-    for option in options:
-        if option["provider"] == LLM_PROVIDER and option["model"] == active_model:
-            return option
+    options_by_key = {
+        (option["provider"], option["model"]): option for option in options
+    }
+    default = options_by_key.get((LLM_PROVIDER, active_model))
+    if default is not None:
+        return default
     if options:
         return options[0]
     return {
@@ -203,10 +206,12 @@ _LOCAL_CORS_ORIGINS = (
 
 def get_cors_origins() -> list[str]:
     """Return allowed browser origins for the FastAPI CORS middleware."""
-    origins = list(_LOCAL_CORS_ORIGINS)
+    origins: list[str] = list(_LOCAL_CORS_ORIGINS)
+    seen: set[str] = set(origins)
     extra = os.getenv("FRONTEND_ALLOWED_ORIGINS", "")
     for origin in extra.split(","):
         cleaned = origin.strip().rstrip("/")
-        if cleaned and cleaned not in origins:
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
             origins.append(cleaned)
     return origins

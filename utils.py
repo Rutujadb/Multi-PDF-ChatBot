@@ -206,13 +206,13 @@ def validate_pdf_files(uploaded_files) -> Tuple[list, List[str]]:
         Tuple of (valid_files, invalid_filenames).
     """
     valid = []
-    invalid: List[str] = []
+    invalid: set[str] = set()
     for f in uploaded_files:
         if f.name.lower().endswith(".pdf") and getattr(f, "size", 1) > 0:
             valid.append(f)
         else:
-            invalid.append(f.name)
-    return valid, invalid
+            invalid.add(f.name)
+    return valid, list(invalid)
 
 
 def build_chat_export(messages: List[dict], fmt: str = "md") -> str:
