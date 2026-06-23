@@ -73,11 +73,13 @@ def filter_new_api_files(
     """Return API uploads that are not already indexed."""
     new_files: List[BufferedPdfUpload] = []
     skipped: List[str] = []
+    seen_names = set(already_indexed)
     for upload in uploaded_files:
-        if upload.name in already_indexed:
+        if upload.name in seen_names:
             skipped.append(upload.name)
         else:
             new_files.append(upload)
+            seen_names.add(upload.name)
     return new_files, skipped
 
 

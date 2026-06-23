@@ -169,11 +169,19 @@ export default function Dashboard() {
     setPendingFiles((prev) => {
       const next = [...prev]
       pdfs.forEach((file) => {
-        if (indexedFiles.some((f) => f.name === file.name)) {
-          pushToast(`${file.name} already indexed - skipped`, 'warn')
+        const indexed = indexedFiles.find((f) => f.name === file.name)
+        if (indexed) {
+          pushToast(
+            `you cannot add same file twice. Existing doc reference: ${indexed.name} (${indexed.pages} pages, ${indexed.chunks} chunks)`,
+            'warn'
+          )
           return
         }
-        if (!next.some((p) => p.name === file.name)) next.push(file)
+        if (next.some((p) => p.name === file.name)) {
+          pushToast(`you cannot add same file twice. Existing doc reference: ${file.name}`, 'warn')
+          return
+        }
+        next.push(file)
       })
       return next
     })
@@ -203,7 +211,15 @@ export default function Dashboard() {
       const hasWarnings = (result.failed?.length || 0) + (result.invalid?.length || 0) > 0
       pushToast(result.message || 'PDFs indexed', hasWarnings ? 'warn' : 'ok')
     } catch (err) {
-      pushToast(err.message, 'warn')
+      const references = err?.payload?.existing_references
+      if (Array.isArray(references) && references.length > 0) {
+        const refText = references
+          .map((item) => `${item.name} (${item.pages ?? 0} pages, ${item.chunks ?? 0} chunks)`)
+          .join(', ')
+        pushToast(`${err.message}. Existing doc reference: ${refText}`, 'warn')
+      } else {
+        pushToast(err.message, 'warn')
+      }
     } finally {
       setProcessing(false)
     }

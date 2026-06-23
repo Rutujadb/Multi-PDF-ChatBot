@@ -21,8 +21,14 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const detail = Array.isArray(data.detail)
       ? data.detail.map((item) => item.msg || item).join(', ')
-      : data.detail
-    throw new Error(detail || data.message || 'Request failed')
+      : typeof data.detail === 'object' && data.detail !== null
+        ? data.detail.message || JSON.stringify(data.detail)
+        : data.detail
+    const error = new Error(detail || data.message || 'Request failed')
+    if (typeof data.detail === 'object' && data.detail !== null) {
+      error.payload = data.detail
+    }
+    throw error
   }
   return data
 }

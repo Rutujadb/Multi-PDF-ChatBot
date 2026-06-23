@@ -248,6 +248,28 @@ def index_stats(vector_store: Any) -> Dict[str, Any]:
         return {"files": [], "total_chunks": 0, "total_pages": 0}
 
 
+def existing_doc_references(
+    indexed_files: List[Dict[str, Any]],
+    filenames: List[str],
+) -> List[Dict[str, Any]]:
+    """Return indexed-file references matching the given filenames."""
+    by_name = {item.get("name"): item for item in indexed_files}
+    references: List[Dict[str, Any]] = []
+    for filename in filenames:
+        item = by_name.get(filename)
+        if item:
+            references.append(item)
+        else:
+            references.append(
+                {
+                    "name": filename,
+                    "pages": 0,
+                    "chunks": 0,
+                }
+            )
+    return references
+
+
 def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
     """Route a question through page-targeted or normal RAG retrieval."""
     (
@@ -495,15 +517,18 @@ async def upload_pdfs(
         else []
     )
     new_files, skipped = filter_new_api_files(valid_files, already_indexed)
+    stats = index_stats(session.vector_store)
 
-    if not new_files and not invalid_files and skipped:
-        return {
-            "message": f"{len(skipped)} file(s) already indexed, skipped.",
-            "processed": 0,
-            "skipped": skipped,
-            "invalid": invalid_files,
-            "indexed_files": index_stats(session.vector_store)["files"],
-        }
+    if skipped:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "you cannot add same file twice",
+                "existing_references": existing_doc_references(
+                    stats["files"], skipped
+                ),
+            },
+        )
 
     if not new_files:
         return {
@@ -512,7 +537,7 @@ async def upload_pdfs(
             "skipped": skipped,
             "invalid": invalid_files,
             "failed": [],
-            "indexed_files": index_stats(session.vector_store)["files"],
+            "indexed_files": stats["files"],
         }
 
     documents, failed = load_buffered_pdfs(new_files)
@@ -542,8 +567,6 @@ async def upload_pdfs(
 
     indexed_count = len(indexed_names)
     message = f"{indexed_count} PDF(s) indexed."
-    if skipped:
-        message += f" {len(skipped)} already indexed, skipped."
     if failed:
         message += f" Could not read: {', '.join(failed)}."
     if invalid_files:

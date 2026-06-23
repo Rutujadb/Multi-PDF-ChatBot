@@ -215,6 +215,17 @@ def _apply_selected_model(label: str) -> None:
         rebuild_chain()
 
 
+def _existing_doc_reference(filename: str) -> str:
+    """Return a short reference string for an indexed document."""
+    for item in st.session_state.get("indexed_files", []):
+        if item.get("name") == filename:
+            return (
+                f"{item['name']} ({item.get('pages', 0)} pages, "
+                f"{item.get('chunks', 0)} chunks)"
+            )
+    return filename
+
+
 def process_uploaded_pdfs(uploaded_files):
     """Validate, de-duplicate, embed, and index the uploaded PDFs.
 
@@ -229,7 +240,12 @@ def process_uploaded_pdfs(uploaded_files):
     if invalid_files:
         st.error(f"Invalid files skipped: {', '.join(invalid_files)}")
     if skipped:
-        st.info(f"{len(skipped)} file(s) already indexed, skipped.")
+        references = ", ".join(_existing_doc_reference(name) for name in skipped)
+        st.error(
+            "you cannot add same file twice. "
+            f"Existing doc reference: {references}"
+        )
+        return
 
     if not new_files:
         st.info("No new PDFs to process.")
