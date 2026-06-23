@@ -34,6 +34,8 @@ from config import (
     STREAMLIT_APP_URL,
     TOP_K_RESULTS,
     VECTOR_STORE,
+    get_available_llm_options,
+    get_default_llm_option,
     get_active_llm_name,
     get_cors_origins,
 )
@@ -120,12 +122,22 @@ class AppSession:
     chain: Any = None
     vector_store: Any = None
     indexed_files: List[str] = field(default_factory=list)
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
 
     def ensure_memory(self) -> Any:
         """Create conversation memory on first use."""
         if self.memory is None:
             self.memory = _get_memory()
         return self.memory
+
+    def ensure_llm_selection(self) -> None:
+        """Ensure the session has a valid provider/model selection."""
+        if self.llm_provider and self.llm_model:
+            return
+        default_llm = get_default_llm_option()
+        self.llm_provider = default_llm["provider"]
+        self.llm_model = default_llm["model"]
 
     def rebuild_chain(self) -> None:
         """Rebuild the RAG chain from the current vector store."""
@@ -139,6 +151,7 @@ class AppSession:
             _retrieve,
         ) = _vector_store()
         _, build_rag_chain, _ = _rag_chain()
+        self.ensure_llm_selection()
         self.indexed_files = (
             get_indexed_filenames(self.vector_store)
             if self.vector_store
@@ -146,7 +159,12 @@ class AppSession:
         )
         if self.indexed_files:
             retriever = get_retriever(self.vector_store)
-            self.chain = build_rag_chain(retriever, self.ensure_memory())
+            self.chain = build_rag_chain(
+                retriever,
+                self.ensure_memory(),
+                llm_provider=self.llm_provider,
+                llm_model=self.llm_model,
+            )
         else:
             self.chain = None
 
@@ -155,6 +173,13 @@ class ChatRequest(BaseModel):
     """Payload for a chat message."""
 
     message: str
+
+
+class ModelSelectionRequest(BaseModel):
+    """Payload for selecting the active provider/model in one session."""
+
+    provider: str
+    model: str
 
 
 def _page_label(metadata: dict) -> str:
@@ -237,6 +262,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
     answer_from_documents, _, query_chain = _rag_chain()
 
     ensure_session_vector_store(session)
+    session.ensure_llm_selection()
     indexed_files = session.indexed_files or (
         get_indexed_filenames(session.vector_store)
         if session.vector_store
@@ -248,12 +274,15 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
         page_docs = get_page_documents(session.vector_store, ref_file, ref_page)
         if page_docs:
             result = answer_from_documents(
-                prompt, page_docs, vector_store=session.vector_store
+                prompt,
+                page_docs,
+                vector_store=session.vector_store,
+                llm_provider=session.llm_provider,
+                llm_model=session.llm_model,
             )
             try:
-                session.ensure_memory().save_context(
-                    {"question": prompt}, {"answer": result["answer"]}
-                )
+                session.ensure_memory().add_user_message(prompt)
+                session.ensure_memory().add_ai_message(result["answer"])
             except Exception:
                 pass
             return result
@@ -272,17 +301,25 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
             global_k=4,
         )
         result = answer_from_documents(
-            prompt, overview_docs, vector_store=session.vector_store
+            prompt,
+            overview_docs,
+            vector_store=session.vector_store,
+            llm_provider=session.llm_provider,
+            llm_model=session.llm_model,
         )
         try:
-            session.ensure_memory().save_context(
-                {"question": prompt}, {"answer": result["answer"]}
-            )
+            session.ensure_memory().add_user_message(prompt)
+            session.ensure_memory().add_ai_message(result["answer"])
         except Exception:
             pass
         return result
 
-    return query_chain(session.chain, prompt, session.vector_store)
+    return query_chain(
+        session.chain,
+        prompt,
+        session.vector_store,
+        chat_history=session.ensure_memory(),
+    )
 
 
 def create_session(session_id: Optional[str] = None) -> AppSession:
@@ -291,7 +328,13 @@ def create_session(session_id: Optional[str] = None) -> AppSession:
     sid = session_id or str(uuid.uuid4())
     persist_dir = session_chroma_dir(sid)
     vector_store = load_existing_vector_store(persist_dir)
-    session = AppSession(session_id=sid, vector_store=vector_store)
+    default_llm = get_default_llm_option()
+    session = AppSession(
+        session_id=sid,
+        vector_store=vector_store,
+        llm_provider=default_llm["provider"],
+        llm_model=default_llm["model"],
+    )
     if vector_store is not None:
         session.rebuild_chain()
     return session
@@ -358,6 +401,7 @@ def get_status(session_id: Optional[str] = None):
     """Return session, index, and configuration details for the dashboard."""
     session = get_session(session_id)
     ensure_session_vector_store(session)
+    session.ensure_llm_selection()
     stats = index_stats(session.vector_store)
     return {
         "session_id": session.session_id,
@@ -369,8 +413,8 @@ def get_status(session_id: Optional[str] = None):
             "top_k": TOP_K_RESULTS,
         },
         "config": {
-            "llm": get_active_llm_name(),
-            "provider": LLM_PROVIDER,
+            "llm": session.llm_model or get_active_llm_name(),
+            "provider": session.llm_provider or LLM_PROVIDER,
             "store": VECTOR_STORE,
             "embeddings": EMBEDDING_MODEL_NAME,
             "temperature": LLM_TEMPERATURE,
@@ -381,9 +425,44 @@ def get_status(session_id: Optional[str] = None):
             "max_tokens": LLM_MAX_TOKENS,
         },
         "messages": session.messages,
+        "available_models": get_available_llm_options(),
+        "selected_model": {
+            "provider": session.llm_provider,
+            "model": session.llm_model,
+        },
         "example_questions": EXAMPLE_QUESTIONS,
         "streamlit_url": STREAMLIT_URL,
         "chat_ready": session.chain is not None,
+    }
+
+
+@app.post("/api/model")
+def set_active_model(body: ModelSelectionRequest, session_id: Optional[str] = None):
+    """Update the active provider/model for one API session."""
+    session = get_session(session_id)
+    available = get_available_llm_options()
+    selected = next(
+        (
+            option
+            for option in available
+            if option["provider"] == body.provider and option["model"] == body.model
+        ),
+        None,
+    )
+    if selected is None:
+        raise HTTPException(status_code=400, detail="Selected model is not available.")
+
+    session.llm_provider = selected["provider"]
+    session.llm_model = selected["model"]
+    if session.vector_store is not None:
+        session.rebuild_chain()
+
+    return {
+        "message": "Model updated.",
+        "selected_model": {
+            "provider": session.llm_provider,
+            "model": session.llm_model,
+        },
     }
 
 
@@ -522,9 +601,7 @@ def clear_chat(session_id: Optional[str] = None):
     """Clear chat history while keeping indexed PDFs."""
     session = get_session(session_id)
     session.messages = []
-    session.ensure_memory()
-    if session.chain is not None:
-        session.chain.memory = session.memory
+    session.memory = _get_memory()
     return {"message": "Chat cleared.", "messages": []}
 
 

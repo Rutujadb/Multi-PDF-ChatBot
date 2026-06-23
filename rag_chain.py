@@ -1,4 +1,4 @@
-"""Retrieval-Augmented Generation chain: LLM, memory, and orchestration.
+"""Retrieval-Augmented Generation chain: LLM, chat history, and orchestration.
 
 Wires the vector-store retriever to the configured LLM (OpenRouter, Groq,
 Nvidia, or Gemini) with conversation memory, using a grounding prompt so
@@ -6,20 +6,20 @@ answers come only from the uploaded documents.
 
 SRS references: FR-RAG-01, FR-RAG-02, FR-RAG-03, FR-RAG-04, FR-MEM-01, FR-MEM-02.
 
-Note on versions: this project runs LangChain 1.x. ``ConversationBufferMemory``
-and ``ConversationalRetrievalChain`` now live in the ``langchain_classic``
-package (they were in ``langchain.*`` in the 0.2.x era the PLAN was written
-against).
+Note on versions: this project runs LangChain 1.x. ``ConversationalRetrievalChain``
+now lives in the ``langchain_classic`` package (it was in ``langchain.*`` in the
+0.2.x era the PLAN was written against).
 """
 
 from typing import Any, Dict, Optional
 
+from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.language_models import BaseLanguageModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import PromptTemplate
 from langchain_core.retrievers import BaseRetriever
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
-from langchain_classic.memory import ConversationBufferMemory
 from langchain_classic.chains import ConversationalRetrievalChain
 
 from config import (
@@ -130,25 +130,14 @@ def get_llm(
     )
 
 
-def get_memory() -> ConversationBufferMemory:
-    """Create a fresh conversation memory buffer.
-
-    ``output_key`` is set to ``"answer"`` so the chain (which also returns
-    ``source_documents``) knows which output to store in history.
-
-    Returns:
-        A ``ConversationBufferMemory`` configured for the RAG chain.
-    """
-    return ConversationBufferMemory(
-        memory_key="chat_history",
-        output_key="answer",
-        return_messages=True,
-    )
+def get_memory() -> InMemoryChatMessageHistory:
+    """Create a fresh in-memory chat history for one isolated session."""
+    return InMemoryChatMessageHistory()
 
 
 def build_rag_chain(
     retriever: BaseRetriever,
-    memory: ConversationBufferMemory,
+    chat_history: Optional[InMemoryChatMessageHistory] = None,
     llm_provider: Optional[str] = None,
     llm_model: Optional[str] = None,
 ) -> ConversationalRetrievalChain:
@@ -160,7 +149,7 @@ def build_rag_chain(
 
     Args:
         retriever: Vector-store retriever supplying context chunks.
-        memory: Conversation buffer memory for multi-turn context.
+        chat_history: Session chat history, managed outside the chain.
 
     Returns:
         A configured ``ConversationalRetrievalChain``.
@@ -185,7 +174,6 @@ def build_rag_chain(
     chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=retriever,
-        memory=memory,
         return_source_documents=True,
         combine_docs_chain_kwargs={
             "prompt": qa_prompt,
@@ -200,6 +188,7 @@ def query_chain(
     chain: ConversationalRetrievalChain,
     question: str,
     vector_store=None,
+    chat_history: Optional[InMemoryChatMessageHistory] = None,
 ) -> Dict[str, Any]:
     """Invoke the RAG chain with a user question.
 
@@ -216,10 +205,19 @@ def query_chain(
         Dict with ``answer`` (str) and ``source_documents`` (list of Documents).
     """
     try:
-        result = chain.invoke({"question": question})
+        history_messages: list[BaseMessage] = (
+            list(chat_history.messages) if chat_history is not None else []
+        )
+        result = chain.invoke(
+            {"question": question, "chat_history": history_messages}
+        )
         answer = result.get(
             "answer", "Sorry, I could not generate an answer."
         )
+        if chat_history is not None:
+            chat_history.add_messages(
+                [HumanMessage(content=question), AIMessage(content=answer)]
+            )
         raw_sources = result.get("source_documents", [])
         for doc in raw_sources:
             ensure_page_label(doc)

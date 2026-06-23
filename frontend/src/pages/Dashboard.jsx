@@ -6,6 +6,7 @@ import {
   fetchStatus,
   resetSession,
   sendChat,
+  updateModel,
   uploadPdfs,
 } from '../api/client.js'
 import { STREAMLIT_APP_URL } from '../config.js'
@@ -106,6 +107,8 @@ export default function Dashboard() {
   const [indexedFiles, setIndexedFiles] = useState([])
   const [stats, setStats] = useState({ chunks: 0, pages: 0, dims: 384, top_k: 4 })
   const [config, setConfig] = useState(null)
+  const [availableModels, setAvailableModels] = useState([])
+  const [selectedModelLabel, setSelectedModelLabel] = useState('')
   const [messages, setMessages] = useState([])
   const [pendingFiles, setPendingFiles] = useState([])
   const [input, setInput] = useState('')
@@ -133,6 +136,12 @@ export default function Dashboard() {
     setIndexedFiles(data.indexed_files || [])
     setStats((prev) => data.stats || prev)
     setConfig(data.config || null)
+    setAvailableModels(data.available_models || [])
+    const selected = data.selected_model
+    if (selected?.provider && selected?.model) {
+      const label = `${selected.provider}::${selected.model}`
+      setSelectedModelLabel(label)
+    }
     setMessages(data.messages || [])
     if (data.streamlit_url) setStreamlitUrl(data.streamlit_url)
     return data
@@ -244,6 +253,20 @@ export default function Dashboard() {
     }
   }
 
+  const handleModelChange = async (event) => {
+    const value = event.target.value
+    setSelectedModelLabel(value)
+    const [provider, model] = value.split('::')
+    try {
+      await updateModel(provider, model)
+      await refreshStatus()
+      pushToast('Model updated', 'ok')
+    } catch (err) {
+      pushToast(err.message, 'warn')
+      await refreshStatus()
+    }
+  }
+
   if (loading) {
     return (
       <div className="h-screen grid place-items-center bg-muted text-ink">
@@ -331,6 +354,26 @@ export default function Dashboard() {
                   <div className="mt-1 text-xs font-medium text-ink/60">or click to browse</div>
                 </label>
               </div>
+
+              {availableModels.length > 0 && (
+                <div>
+                  <div className="label text-ink/60 mb-3">Models</div>
+                  <select
+                    value={selectedModelLabel}
+                    onChange={handleModelChange}
+                    className="w-full h-12 rounded-md bg-muted border border-line px-3 text-sm font-medium outline-none focus:border-brand-500"
+                  >
+                    {availableModels.map((option) => {
+                      const value = `${option.provider}::${option.model}`
+                      return (
+                        <option key={value} value={value}>
+                          {option.label}
+                        </option>
+                      )
+                    })}
+                  </select>
+                </div>
+              )}
 
               {pendingFiles.length > 0 && (
                 <div>

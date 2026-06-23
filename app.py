@@ -273,8 +273,6 @@ def clear_chat():
     st.session_state.pdf_viewer_stage = "cleanup"
     st.session_state.messages = []
     st.session_state.memory = get_memory()
-    if st.session_state.chain is not None:
-        st.session_state.chain.memory = st.session_state.memory
 
 
 def reset_session():
@@ -461,9 +459,8 @@ def answer_prompt(prompt: str) -> dict:
                 llm_model=st.session_state.selected_llm_model,
             )
             try:
-                st.session_state.memory.save_context(
-                    {"question": prompt}, {"answer": result["answer"]}
-                )
+                st.session_state.memory.add_user_message(prompt)
+                st.session_state.memory.add_ai_message(result["answer"])
             except Exception:
                 pass
             return result
@@ -484,14 +481,18 @@ def answer_prompt(prompt: str) -> dict:
             llm_model=st.session_state.selected_llm_model,
         )
         try:
-            st.session_state.memory.save_context(
-                {"question": prompt}, {"answer": result["answer"]}
-            )
+            st.session_state.memory.add_user_message(prompt)
+            st.session_state.memory.add_ai_message(result["answer"])
         except Exception:
             pass
         return result
 
-    return query_chain(st.session_state.chain, prompt, st.session_state.vector_store)
+    return query_chain(
+        st.session_state.chain,
+        prompt,
+        st.session_state.vector_store,
+        chat_history=st.session_state.memory,
+    )
 
 
 def render_chat():

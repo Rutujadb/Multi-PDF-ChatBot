@@ -49,6 +49,14 @@ export function fetchStatus() {
   return request('/api/status')
 }
 
+export function updateModel(provider, model) {
+  return request('/api/model', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, model }),
+  })
+}
+
 export async function uploadPdfs(files) {
   const formData = new FormData()
   files.forEach((file) => formData.append('files', file))
