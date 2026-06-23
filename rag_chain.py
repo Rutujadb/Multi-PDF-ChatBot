@@ -1,8 +1,8 @@
 """Retrieval-Augmented Generation chain: LLM, memory, and orchestration.
 
-Wires the vector-store retriever to the configured LLM (Gemini or OpenRouter)
-with conversation memory, using a grounding prompt so answers come only from
-the uploaded documents.
+Wires the vector-store retriever to the configured LLM (OpenRouter, Groq,
+Nvidia, or Gemini) with conversation memory, using a grounding prompt so
+answers come only from the uploaded documents.
 
 SRS references: FR-RAG-01, FR-RAG-02, FR-RAG-03, FR-RAG-04, FR-MEM-01, FR-MEM-02.
 
@@ -12,7 +12,7 @@ package (they were in ``langchain.*`` in the 0.2.x era the PLAN was written
 against).
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.prompts import PromptTemplate
@@ -26,6 +26,10 @@ from config import (
     LLM_PROVIDER,
     GOOGLE_API_KEY,
     GEMINI_MODEL_NAME,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    NVIDIA_API_KEY,
+    NVIDIA_MODEL,
     OPENROUTER_API_KEY,
     OPENROUTER_APP_NAME,
     OPENROUTER_HTTP_REFERER,
@@ -41,8 +45,11 @@ from config import (
 from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
 
 
-def get_llm() -> BaseLanguageModel:
-    """Load the configured chat LLM (OpenRouter by default, or Gemini).
+def get_llm(
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> BaseLanguageModel:
+    """Load the configured chat LLM (OpenRouter, Groq, Nvidia, or Gemini).
 
     The provider is selected by ``LLM_PROVIDER`` in ``config.py`` / ``.env``.
     API keys are read from configuration and never hardcoded.
@@ -50,7 +57,9 @@ def get_llm() -> BaseLanguageModel:
     Returns:
         A LangChain chat-model instance.
     """
-    if LLM_PROVIDER == "openrouter":
+    provider = (llm_provider or LLM_PROVIDER).strip().lower()
+
+    if provider == "openrouter":
         if not OPENROUTER_API_KEY:
             raise ValueError(
                 "OPENROUTER_API_KEY is not set. Add it to your .env file."
@@ -58,7 +67,7 @@ def get_llm() -> BaseLanguageModel:
         return ChatOpenAI(
             api_key=OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1",
-            model=OPENROUTER_MODEL,
+            model=llm_model or OPENROUTER_MODEL,
             temperature=LLM_TEMPERATURE,
             max_tokens=LLM_MAX_TOKENS,
             model_kwargs={
@@ -71,18 +80,53 @@ def get_llm() -> BaseLanguageModel:
             },
         )
 
-    if not GOOGLE_API_KEY:
-        raise ValueError(
-            "GOOGLE_API_KEY is not set. Add it to your .env file or set "
-            "LLM_PROVIDER=openrouter with OPENROUTER_API_KEY."
+    if provider == "groq":
+        if not GROQ_API_KEY:
+            raise ValueError(
+                "GROQ_API_KEY is not set. Add it to your .env file."
+            )
+        return ChatOpenAI(
+            api_key=GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1",
+            model=llm_model or GROQ_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            top_p=LLM_TOP_P,
         )
-    return ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL_NAME,
-        google_api_key=GOOGLE_API_KEY,
-        temperature=LLM_TEMPERATURE,
-        top_p=LLM_TOP_P,
-        top_k=LLM_TOP_K,
-        max_output_tokens=LLM_MAX_TOKENS,
+
+    if provider == "nvidia":
+        if not NVIDIA_API_KEY:
+            raise ValueError(
+                "NVIDIA_API_KEY is not set. Add it to your .env file."
+            )
+        return ChatOpenAI(
+            api_key=NVIDIA_API_KEY,
+            base_url="https://integrate.api.nvidia.com/v1",
+            model=llm_model or NVIDIA_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+            top_p=LLM_TOP_P,
+        )
+
+    if provider == "gemini":
+        if not GOOGLE_API_KEY:
+            raise ValueError(
+                "GOOGLE_API_KEY is not set. Add it to your .env file or set "
+                "LLM_PROVIDER to openrouter, groq, or nvidia with the matching "
+                "API key."
+            )
+        return ChatGoogleGenerativeAI(
+            model=llm_model or GEMINI_MODEL_NAME,
+            google_api_key=GOOGLE_API_KEY,
+            temperature=LLM_TEMPERATURE,
+            top_p=LLM_TOP_P,
+            top_k=LLM_TOP_K,
+            max_output_tokens=LLM_MAX_TOKENS,
+        )
+
+    raise ValueError(
+        f"Unsupported LLM_PROVIDER: {provider!r}. "
+        "Use openrouter, groq, nvidia, or gemini."
     )
 
 
@@ -105,6 +149,8 @@ def get_memory() -> ConversationBufferMemory:
 def build_rag_chain(
     retriever: BaseRetriever,
     memory: ConversationBufferMemory,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
 ) -> ConversationalRetrievalChain:
     """Build the conversational RAG chain from retriever, LLM, and memory.
 
@@ -119,7 +165,7 @@ def build_rag_chain(
     Returns:
         A configured ``ConversationalRetrievalChain``.
     """
-    llm = get_llm()
+    llm = get_llm(llm_provider=llm_provider, llm_model=llm_model)
 
     # The document-combining step only receives ``context`` and ``question``;
     # chat history is handled separately by the question-condensing step, so the
@@ -202,6 +248,8 @@ def answer_from_documents(
     question: str,
     documents,
     vector_store=None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Answer a question using an explicit set of documents (no retrieval).
 
@@ -232,7 +280,10 @@ def answer_from_documents(
     prompt = _qa_template().format(context=context, question=question)
 
     try:
-        response = get_llm().invoke(prompt)
+        response = get_llm(
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+        ).invoke(prompt)
         answer = getattr(response, "content", str(response))
         if is_refusal_answer(answer):
             cited = []
