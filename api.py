@@ -124,6 +124,8 @@ class AppSession:
     indexed_files: List[str] = field(default_factory=list)
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    suggested_questions: List[str] = field(default_factory=list)
+    suggestions_index_key: tuple = field(default_factory=tuple)
 
     def ensure_memory(self) -> Any:
         """Create conversation memory on first use."""
@@ -167,6 +169,30 @@ class AppSession:
             )
         else:
             self.chain = None
+        refresh_session_suggestions(self)
+
+
+def refresh_session_suggestions(session: AppSession) -> None:
+    """Regenerate starter questions when the indexed file set changes."""
+    current_key = tuple(sorted(session.indexed_files or []))
+    if not current_key:
+        session.suggested_questions = []
+        session.suggestions_index_key = ()
+        return
+    if (
+        session.suggestions_index_key == current_key
+        and session.suggested_questions
+    ):
+        return
+    from rag_chain import generate_suggested_questions
+
+    session.suggested_questions = generate_suggested_questions(
+        session.vector_store,
+        list(session.indexed_files),
+        llm_provider=session.llm_provider,
+        llm_model=session.llm_model,
+    )
+    session.suggestions_index_key = current_key
 
 
 class ChatRequest(BaseModel):
@@ -452,7 +478,8 @@ def get_status(session_id: Optional[str] = None):
             "provider": session.llm_provider,
             "model": session.llm_model,
         },
-        "example_questions": EXAMPLE_QUESTIONS,
+        "suggested_questions": session.suggested_questions or list(EXAMPLE_QUESTIONS),
+        "example_questions": session.suggested_questions or list(EXAMPLE_QUESTIONS),
         "streamlit_url": STREAMLIT_URL,
         "chat_ready": session.chain is not None,
     }
@@ -579,6 +606,7 @@ async def upload_pdfs(
         "invalid": invalid_files,
         "failed": failed,
         "indexed_files": stats["files"],
+        "suggested_questions": session.suggested_questions,
     }
 
 
@@ -655,6 +683,8 @@ def reset_session(session_id: Optional[str] = None):
     session.chain = None
     session.vector_store = None
     session.indexed_files = []
+    session.suggested_questions = []
+    session.suggestions_index_key = ()
     return {
         "message": "Session reset.",
         "messages": [],

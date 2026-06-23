@@ -176,6 +176,13 @@ EXAMPLE_QUESTIONS = [
     "What topics are covered?",
 ]
 
+# --- UI: context-aware suggested questions (generated after indexing) ---
+SUGGESTED_QUESTION_COUNT = 4
+SUGGESTED_QUESTION_RETRIEVAL_QUERY = (
+    "main topics policies procedures requirements eligibility benefits "
+    "rules how to apply overview summary"
+)
+
 # --- UI: app display name (shown in the footer) ---
 APP_NAME = "Multi-PDF ChatBot"
 
