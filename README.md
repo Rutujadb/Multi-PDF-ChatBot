@@ -37,6 +37,8 @@
 - See which PDF and page each answer came from (source citations)
 - Click a source chip to open a highlighted PDF preview (React UI)
 - Hold a context-aware conversation - follow-up questions understand prior turns
+- Switch between available configured LLMs from a **Models** dropdown
+- Reject duplicate filenames with `you cannot add same file twice`
 - Clear chat or reset the session at any time
 
 ---
@@ -79,7 +81,7 @@
 | PDF parsing | PyPDFLoader / pypdf |
 | Embeddings (local) | HuggingFace `all-MiniLM-L6-v2` (384-dim, CPU) |
 | Vector store | ChromaDB (persistent, per-session for React API) |
-| LLM | OpenRouter (default) or Google Gemini 2.0 Flash |
+| LLM | OpenRouter, Groq, Nvidia NIM, or Google Gemini |
 | Source preview | PyMuPDF highlights (PNG preview + downloadable annotated PDF) |
 | Config | python-dotenv |
 
@@ -137,7 +139,7 @@ flowchart TB
     A[User uploads PDFs] --> B{Validate PDFs}
     B -->|invalid| X[Skip + warn]
     B -->|valid| C{Deduplicate by filename}
-    C -->|already indexed| Y[Skip duplicate]
+    C -->|already indexed| Y[Reject duplicate]
     C -->|new file| D[Save raw PDF to uploaded_pdfs/]
     D --> E[PyPDFLoader - extract text per page]
     E --> F[Tag metadata: source, page]
@@ -217,6 +219,8 @@ This prevents one large PDF from filling all retrieval slots.
 
 - Re-ranks retrieved chunks against the generated answer (embedding + lexical overlap)
 - When the answer mentions multiple PDFs, ensures **at least one citation per file**
+- Uses stricter answer/question overlap thresholds to reduce irrelevant citations
+- Prefers tighter excerpt fragments and line-aware matches for more precise highlighting
 - React source panel: `POST /api/source/preview` → PNG with yellow highlights; download annotated PDF
 
 **LLM sampling defaults**:
@@ -238,9 +242,11 @@ This prevents one large PDF from filling all retrieval slots.
 | **Dual UI** | React + Streamlit | React matches design system; Streamlit is quick to deploy on Community Cloud |
 | **API layer** | FastAPI for React only | Keeps Streamlit self-contained; shared Python modules unchanged |
 | **Per-session Chroma (React)** | `chroma_db/api_sessions/{id}/` | Isolates sessions; survives API restart when `session_id` is restored |
+| **Per-session chat history** | `InMemoryChatMessageHistory` | Keeps each chat session's conversation isolated |
 | **Balanced retrieval** | Per-file + global merge | Plain top-k failed on multi-PDF - one document dominated results |
 | **Overview routing** | Regex intent detection | `"summarise"` and `"each pdf"` need guaranteed per-file context |
 | **Citation diversity** | Per-PDF minimum in UI | Answer could mention 2 PDFs while sources showed only 1 |
+| **Precise highlight targeting** | Line-aware phrase search | Cited `page` + `line` should highlight that line, not broad page text |
 | **PDF on disk** | `uploaded_pdfs/` | Enables PyMuPDF highlight preview; vectors alone are not enough |
 | **LLM grounding** | Strict refusal phrase | Prevents hallucination outside uploaded content |
 | **LLM sampling** | `top_p=0.85`, `top_k=40` | Keeps language natural while reducing random token choices |
@@ -272,7 +278,8 @@ This prevents one large PDF from filling all retrieval slots.
 - **Incremental indexing must append, not replace.** `create_or_update_vector_store` with `existing_store` avoids losing prior PDFs on new uploads.
 - **Chunk size trades off retrieval vs context window.** 500-char chunks work for Q&A; overview questions benefit from more chunks per file (4+).
 - **Local embeddings + remote LLM is a practical split.** Embeddings are free and private; only generation needs an API key.
-- **Filename dedup is simple but effective.** Re-uploading the same filename is skipped - good for UX, but users must rename files to re-index changed content.
+- **Duplicate uploads need explicit rejection.** The app now blocks already-indexed files and duplicate filenames in the same upload batch, returning the existing document reference.
+- **Line-aware highlighting improves trust.** Narrowing highlights to the cited line/fragment avoids broad page-wide marks that look imprecise.
 
 ---
 
@@ -280,7 +287,7 @@ This prevents one large PDF from filling all retrieval slots.
 
 - Python 3.10+
 - Node.js 18+ (React UI only)
-- An LLM API key - [OpenRouter](https://openrouter.ai/) or [Google AI Studio](https://aistudio.google.com)
+- At least one LLM API key - [OpenRouter](https://openrouter.ai/), [Groq](https://console.groq.com/keys), [NVIDIA NIM](https://build.nvidia.com/), or [Google AI Studio](https://aistudio.google.com)
 - Internet for LLM calls and the one-time embedding model download (~90 MB)
 
 ## Installation
@@ -310,6 +317,11 @@ Example `.env`:
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=google/gemma-2-9b-it:free
+GROQ_API_KEY=your_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+NVIDIA_API_KEY=your_key_here
+NVIDIA_MODEL=meta/llama-3.1-8b-instruct
+GOOGLE_API_KEY=your_key_here
 
 VECTOR_STORE=chroma
 STREAMLIT_APP_URL=https://multi-pdf-chatbot-rb.streamlit.app/
@@ -349,12 +361,14 @@ streamlit run app.py
 ### React dashboard (live)
 
 1. Open [multi-pdf-chat-bot.vercel.app/dashboard](https://multi-pdf-chat-bot.vercel.app/dashboard)
-2. Drop PDFs in the sidebar → **Process PDFs**
-3. Ask a question - sources appear as clickable chips
-4. Click a source to open the highlighted PDF preview panel
-5. **Clear chat** keeps indexed PDFs · **Reset session** wipes everything
+2. Pick a provider/model from the **Models** dropdown
+3. Drop PDFs in the sidebar → **Process PDFs**
+4. Ask a question - sources appear as clickable chips
+5. Click a source to open the highlighted PDF preview panel
+6. **Clear chat** keeps indexed PDFs · **Reset session** wipes everything
 
 > If the API was idle, wait 1–3 minutes after your first action for [Render](https://multi-pdf-chatbot-y6nu.onrender.com/api/health) to wake up.
+> Duplicate filenames are rejected with `you cannot add same file twice` and the existing document reference.
 
 ### React dashboard (local dev)
 
@@ -363,10 +377,11 @@ streamlit run app.py
 
 ### Streamlit classic
 
-1. Upload PDFs in the sidebar → **Process PDFs**
-2. Type a question in the chat box
-3. Click a source citation to preview the highlighted page
-4. **Clear Chat** or **Reset All** as needed
+1. Pick a provider/model from the **Models** dropdown in the sidebar
+2. Upload PDFs in the sidebar → **Process PDFs**
+3. Type a question in the chat box
+4. Click a source citation to preview the highlighted page
+5. **Clear Chat** or **Reset All** as needed
 
 ## Project structure
 
@@ -383,7 +398,7 @@ multi-pdf-chatbot/
 ├── pdf_processor.py        # PDF load, chunk, dedup
 ├── pdf_storage.py          # Persist PDFs for preview
 ├── vector_store.py         # ChromaDB, embeddings, balanced retrieval
-├── rag_chain.py            # LangChain RAG + memory
+├── rag_chain.py            # LangChain RAG + session chat history
 ├── citation_utils.py       # Answer-aligned citation ranking
 ├── source_viewer.py        # Streamlit source panel
 ├── utils.py                # Validation, source formatting, routing helpers
@@ -402,8 +417,8 @@ multi-pdf-chatbot/
 
 - **Single-user / localhost** - not designed for concurrent multi-user production load
 - **Text-based PDFs only** - scanned image-only PDFs are not supported (no OCR)
-- **Chat history is session-scoped** - lost on browser refresh (indexed vectors persist on disk)
-- **LLM rate limits** apply per provider (OpenRouter / Gemini free tiers)
+- **Chat history is session-scoped** - isolated per session and lost on browser refresh
+- **LLM rate limits** apply per provider (OpenRouter / Groq / Nvidia / Gemini free tiers)
 - **React deploy** — live at [Vercel](https://multi-pdf-chat-bot.vercel.app/) + [Render API](https://multi-pdf-chatbot-y6nu.onrender.com); free tier API sleeps when idle and has ephemeral disk
 
 ## Future scope

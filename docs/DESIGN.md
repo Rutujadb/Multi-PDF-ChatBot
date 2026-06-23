@@ -62,7 +62,7 @@ flowchart LR
         P[uploaded_pdfs/]
         D[chroma_db/]
     end
-    LLM[(OpenRouter / Gemini)]
+    LLM[(OpenRouter / Groq / Nvidia / Gemini)]
 
     R --> F
     S --> I
@@ -96,9 +96,9 @@ Both paths call the same core modules (`pdf_processor`, `vector_store`, `rag_cha
 | Streamlit UI | `app.py`, `source_viewer.py` | Sidebar upload, chat, citation preview |
 | PDF ingestion | `pdf_processor.py`, `pdf_storage.py` | Load, chunk, dedupe, persist raw PDFs |
 | Vector store | `vector_store.py` | Embeddings, Chroma persistence, balanced retrieval |
-| RAG chain | `rag_chain.py` | ConversationalRetrievalChain, memory, LLM calls |
+| RAG chain | `rag_chain.py` | ConversationalRetrievalChain, session chat history, LLM calls |
 | Citations | `citation_utils.py`, `utils.py` | Source chips, answer alignment, intent routing |
-| Configuration | `config.py` | Constants, env vars, CORS origins |
+| Configuration | `config.py` | Constants, env vars, CORS origins, `get_available_llm_options()` |
 
 ---
 
@@ -111,7 +111,7 @@ flowchart TB
     A[User uploads PDFs] --> B{Validate PDFs}
     B -->|invalid| X[Skip + warn]
     B -->|valid| C{Deduplicate by filename}
-    C -->|already indexed| Y[Skip duplicate]
+    C -->|duplicate filename| Y[Reject duplicate]
     C -->|new file| D[Save raw PDF to uploaded_pdfs/]
     D --> E[PyPDFLoader - extract text per page]
     E --> F[Tag metadata: source, page]
@@ -129,7 +129,7 @@ flowchart TB
 |------|--------|--------|
 | Upload | `api_upload.py` / `app.py` | React: FastAPI `UploadFile`; Streamlit: `st.file_uploader` |
 | Validation | `utils.py` | PDF extension + non-empty file check |
-| Dedup | `filter_new_files()` | Filename match against indexed sources — no re-embedding |
+| Dedup | `filter_new_files()` | Rejects already-indexed files and duplicate filenames in the same upload batch |
 | Persist PDF | `pdf_storage.py` | `uploaded_pdfs/{filename}` for source preview |
 | Extract | `pdf_processor.py` | Temp file → PyPDFLoader → one `Document` per page |
 | Chunk | `pdf_processor.py` | Split **per page** so `line` metadata stays accurate |
@@ -173,7 +173,7 @@ flowchart TB
     B --> CH[ConversationalRetrievalChain]
     CH --> CTX
 
-    CTX --> LLM[OpenRouter / Gemini\nstrict grounding prompt]
+    CTX --> LLM[OpenRouter / Groq / Nvidia / Gemini\nstrict grounding prompt]
     LLM --> ANS[Answer text]
     ANS --> CIT[resolve_citation_sources\nanswer-aligned + per-PDF diversity]
     CIT --> UI[Answer + clickable source chips]
@@ -202,9 +202,16 @@ Without this, one large PDF can fill all retrieval slots and starve smaller docu
 
 `resolve_citation_sources()` in `citation_utils.py`:
 
-- Re-ranks retrieved chunks against the generated answer (embedding + lexical overlap)
+- Re-ranks retrieved chunks against the generated answer (embedding + lexical overlap + question overlap)
+- Uses stricter support thresholds to reduce false-positive citations
 - When the answer mentions multiple PDFs, ensures **at least one citation per file**
+- Selects tighter excerpt fragments and adjusts line numbers for more precise highlighting
 - Caps visible sources at `CITATION_MAX_SOURCES` (default 4)
+
+Source preview (`api_source_preview.py`, `source_viewer.py`):
+
+- Searches answer-aligned phrases first, then narrows matches to the cited line when `line` metadata is present
+- Goal: a citation like `page 1, line 4` highlights that line, not broad page-wide text
 
 ### Grounding prompt
 
@@ -213,6 +220,17 @@ The system prompt (`SYSTEM_PROMPT_TEMPLATE` in `config.py`) instructs the LLM to
 > "I don't have enough information in the uploaded documents to answer this."
 
 when context is irrelevant. This reduces hallucination outside uploaded content.
+
+### Session chat history
+
+- `get_memory()` returns a fresh `InMemoryChatMessageHistory` per session (API: `AppSession.memory`; Streamlit: `st.session_state.memory`)
+- `build_rag_chain()` rebuilds the chain when the vector store or selected model changes; optional `llm_provider` / `llm_model` override the `.env` default
+- `query_chain()` passes `chat_history` into the chain and appends Human/AI messages after each response
+- Overview/page-targeted paths use `add_user_message()` / `add_ai_message()` for the same history object
+
+### LLM provider selection
+
+`config.py` exposes `get_available_llm_options()` and `get_default_llm_option()` based on which API keys are set. The React dashboard and Streamlit sidebar call these to populate the **Models** dropdown; `POST /api/model` persists the choice per API session.
 
 ### LLM sampling defaults
 
@@ -233,11 +251,15 @@ when context is irrelevant. This reduces hallucination outside uploaded content.
 | Dual UI | React + Streamlit | React only | Streamlit deploys quickly on Community Cloud |
 | API layer | FastAPI for React only | Single monolith | Streamlit stays self-contained; shared Python core |
 | Per-session Chroma (React) | `chroma_db/api_sessions/{id}/` | Global store | Session isolation; restorable after API restart |
+| Per-session chat history | `InMemoryChatMessageHistory` | `ConversationBufferMemory` | Isolates each session's conversation turns |
+| Runtime model selection | `Models` dropdown in UI | Fixed `.env` provider only | Users can switch among configured providers without redeploying |
 | Balanced retrieval | Per-file + global merge | Plain top-k | Plain top-k failed on multi-PDF workloads |
 | Overview routing | Regex intent detection | Single retrieval path | Overview questions need guaranteed per-file context |
 | Citation diversity | Per-PDF minimum in UI | Raw top retrieved | Answer could cite 2 PDFs while UI showed 1 |
+| Precise highlight targeting | Line-aware phrase search | Whole-page text search | Cited `page` + `line` should highlight that line only |
+| Duplicate upload handling | Hard reject with existing doc reference | Silent skip | Prevents duplicate indexing in the same batch or re-upload |
 | PDF on disk | `uploaded_pdfs/` | Vectors only | PyMuPDF highlight preview needs the raw file |
-| LLM provider | OpenRouter default | Gemini only | Flexible model choice; free-tier models available |
+| LLM providers | OpenRouter, Groq, Nvidia, Gemini | Single provider only | Runtime choice via UI; keys from `.env` |
 | LLM sampling | `top_p=0.85`, `top_k=40` | Provider defaults | Reduces odd word choices while preserving natural variation |
 | Source preview (Streamlit Cloud) | PNG not iframe PDF | Embedded PDF viewer | Chrome blocks PDF iframes on Streamlit Cloud |
 | Lazy imports (API) | Deferred torch/LangChain load | Eager import at startup | Render free tier (512 MB) OOM on cold start |
@@ -252,12 +274,22 @@ when context is irrelevant. This reduces hallucination outside uploaded content.
 |-------|------|---------|
 | `session_id` | UUID string | Client identifier; keys Chroma persist dir |
 | `messages` | List of dicts | Chat history for UI replay |
-| `memory` | LangChain memory | Conversational context for follow-ups |
+| `memory` | `InMemoryChatMessageHistory` | Isolated conversational context for follow-ups |
 | `chain` | ConversationalRetrievalChain | RAG pipeline handle |
 | `vector_store` | Chroma instance | Embedded chunks for this session |
 | `indexed_files` | List of filenames | Quick index summary |
+| `llm_provider` | string | Active provider for this session (`openrouter`, `groq`, `nvidia`, `gemini`) |
+| `llm_model` | string | Active model slug/name for this session |
 
-Sessions are held in an in-memory `_sessions` dict. On restart, a client can pass an existing `session_id` to restore Chroma from disk if the persist directory still exists.
+Sessions are held in an in-memory `_sessions` dict. The React UI stores `session_id` in browser `localStorage`. On API restart, a client can pass an existing `session_id` to restore Chroma from disk if the persist directory still exists.
+
+### Streamlit session (`st.session_state`)
+
+| Key | Purpose |
+|-----|---------|
+| `memory` | `InMemoryChatMessageHistory` for follow-up context |
+| `selected_llm_provider` / `selected_llm_model` | Active model from the sidebar **Models** dropdown |
+| `chain`, `vector_store`, `indexed_files` | RAG pipeline state (same concepts as API session) |
 
 ### Persistence layout
 
@@ -292,7 +324,8 @@ All session-scoped endpoints accept optional query param `session_id`.
 |--------|----------|---------|
 | `GET` | `/api/health` | Health probe |
 | `POST` | `/api/session` | Create new session; returns `{ session_id }` |
-| `GET` | `/api/status` | Index stats, config, messages, example questions |
+| `GET` | `/api/status` | Index stats, config, messages, available models, selected model |
+| `POST` | `/api/model` | Set active provider/model for this session |
 | `POST` | `/api/upload` | Multipart PDF upload; embed and index |
 | `POST` | `/api/chat` | Ask a question; returns answer + sources |
 | `POST` | `/api/clear-chat` | Clear messages; keep indexed PDFs |
@@ -338,7 +371,46 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 **Upload**
 
 - `multipart/form-data` with one or more `files` fields
-- Response includes `processed`, `skipped`, `invalid`, `failed`, `indexed_files`
+- Success response includes `processed`, `invalid`, `failed`, `indexed_files`
+- Duplicate filenames return **HTTP 409** with:
+
+```json
+{
+  "detail": {
+    "message": "you cannot add same file twice",
+    "existing_references": [
+      { "name": "report.pdf", "pages": 12, "chunks": 48 }
+    ]
+  }
+}
+```
+
+**Model selection**
+
+```json
+// POST /api/model
+{ "provider": "groq", "model": "llama-3.3-70b-versatile" }
+
+// Response
+{
+  "message": "Model updated.",
+  "selected_model": {
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile"
+  }
+}
+```
+
+`GET /api/status` also returns:
+
+```json
+{
+  "available_models": [
+    { "provider": "openrouter", "model": "...", "label": "OpenRouter - ..." }
+  ],
+  "selected_model": { "provider": "openrouter", "model": "..." }
+}
+```
 
 ---
 
@@ -348,10 +420,18 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `OPENROUTER_API_KEY` | Yes (if OpenRouter) | LLM generation |
-| `LLM_PROVIDER` | No | `openrouter` or `gemini` |
-| `OPENROUTER_MODEL` | No | Model slug (default: `mistralai/mistral-7b-instruct`) |
+| `LLM_PROVIDER` | No | `openrouter`, `groq`, `nvidia`, or `gemini` |
+| `OPENROUTER_API_KEY` | If OpenRouter | LLM generation |
+| `OPENROUTER_MODEL` | No | OpenRouter model slug |
+| `GROQ_API_KEY` | If Groq | LLM generation |
+| `GROQ_MODEL` | No | Groq model slug (default: `llama-3.3-70b-versatile`) |
+| `NVIDIA_API_KEY` | If Nvidia | LLM generation |
+| `NVIDIA_MODEL` | No | Nvidia NIM model (default: `meta/llama-3.1-8b-instruct`) |
 | `GOOGLE_API_KEY` | If Gemini | Alternative LLM provider |
+| `GEMINI_MODEL_NAME` | No | Gemini model name |
+| `LLM_TOP_P` | No | Decoding `top_p` (default `0.85`) |
+| `LLM_TOP_K` | No | Decoding `top_k` (default `40`) |
+| `LLM_FREQUENCY_PENALTY` | No | OpenRouter frequency penalty |
 | `VECTOR_STORE` | No | `chroma` (default) or `pinecone` |
 | `STREAMLIT_APP_URL` | No | Link shown in React dashboard |
 | `FRONTEND_ALLOWED_ORIGINS` | Production | Comma-separated CORS origins for Vercel/Pages |
@@ -392,7 +472,9 @@ See [DEPLOY.md](../DEPLOY.md) for production setup.
 - **Incremental indexing must append, not replace.** `create_or_update_vector_store` with `existing_store` preserves prior PDFs.
 - **Chunk size trades retrieval vs context.** 500-char chunks work for Q&A; overview questions benefit from 4+ chunks per file.
 - **Local embeddings + remote LLM is practical.** Embeddings are free and private; only generation needs an API key.
-- **Filename dedup is simple but effective.** Re-uploading the same filename is skipped — rename files to re-index changed content.
+- **Duplicate uploads need explicit rejection.** The app blocks already-indexed files and duplicate filenames in the same upload batch, returning the existing document reference.
+- **Line-aware highlighting improves trust.** Narrowing highlights to the cited line/fragment avoids broad page-wide marks that look imprecise.
+- **Session-scoped chat history matters.** `InMemoryChatMessageHistory` keeps each browser/API session isolated without sharing turns across sessions.
 - **Lazy imports are required on constrained hosts.** Eager loading of torch + LangChain caused Render OOM/timeouts.
 
 ---
@@ -402,9 +484,9 @@ See [DEPLOY.md](../DEPLOY.md) for production setup.
 - Single-user / session-scoped — not designed for concurrent multi-user production load
 - Text-based PDFs only — no OCR for scanned documents
 - Chat history lost on browser refresh (indexed vectors may persist on disk)
-- LLM rate limits apply per provider (OpenRouter / Gemini free tiers)
+- LLM rate limits apply per provider (OpenRouter / Groq / Nvidia / Gemini free tiers)
 - Render free tier: API sleeps after ~15 min idle; ephemeral disk may wipe uploads between deploys
-- Re-uploading an unchanged filename is skipped (by design)
+- Duplicate filenames are rejected with `you cannot add same file twice` (not silently skipped)
 
 ---
 
