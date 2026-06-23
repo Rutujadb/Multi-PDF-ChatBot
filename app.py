@@ -48,6 +48,7 @@ from rag_chain import (
     build_rag_chain,
     query_chain,
     answer_from_documents,
+    generate_suggested_questions,
 )
 from utils import (
     validate_pdf_files,
@@ -156,6 +157,10 @@ def initialise_session_state():
         st.session_state.selected_llm_provider = default_llm["provider"]
         st.session_state.selected_llm_model = default_llm["model"]
         st.session_state.selected_llm_label = default_llm["label"]
+    if "suggested_questions" not in st.session_state:
+        st.session_state.suggested_questions = []
+    if "suggestions_index_key" not in st.session_state:
+        st.session_state.suggestions_index_key = ()
     if "vector_store" not in st.session_state:
         vector_store = load_existing_vector_store()
         st.session_state.vector_store = vector_store
@@ -169,6 +174,29 @@ def initialise_session_state():
                     llm_provider=st.session_state.selected_llm_provider,
                     llm_model=st.session_state.selected_llm_model,
                 )
+                refresh_suggested_questions()
+
+
+def refresh_suggested_questions() -> None:
+    """Regenerate starter questions when the indexed file set changes."""
+    indexed = st.session_state.indexed_files or []
+    current_key = tuple(sorted(indexed))
+    if not current_key:
+        st.session_state.suggested_questions = []
+        st.session_state.suggestions_index_key = ()
+        return
+    if (
+        st.session_state.get("suggestions_index_key") == current_key
+        and st.session_state.get("suggested_questions")
+    ):
+        return
+    st.session_state.suggested_questions = generate_suggested_questions(
+        st.session_state.vector_store,
+        indexed,
+        llm_provider=st.session_state.selected_llm_provider,
+        llm_model=st.session_state.selected_llm_model,
+    )
+    st.session_state.suggestions_index_key = current_key
 
 
 def rebuild_chain():
@@ -191,6 +219,7 @@ def rebuild_chain():
         )
     else:
         st.session_state.chain = None
+    refresh_suggested_questions()
 
 
 def _apply_selected_model(label: str) -> None:
@@ -302,6 +331,8 @@ def reset_session():
     st.session_state.chain = None
     st.session_state.vector_store = None
     st.session_state.indexed_files = []
+    st.session_state.suggested_questions = []
+    st.session_state.suggestions_index_key = ()
     # Bump the uploader key so the file_uploader is re-created empty.
     st.session_state.uploader_key += 1
 
@@ -402,10 +433,11 @@ def render_header():
 
 
 def render_starter_questions():
-    """Show clickable example questions before any conversation has started."""
+    """Show clickable suggested questions before any conversation has started."""
+    questions = st.session_state.get("suggested_questions") or EXAMPLE_QUESTIONS
     st.markdown("**Try asking:**")
-    cols = st.columns(len(EXAMPLE_QUESTIONS))
-    for col, question in zip(cols, EXAMPLE_QUESTIONS):
+    cols = st.columns(len(questions))
+    for col, question in zip(cols, questions):
         if col.button(question, use_container_width=True):
             st.session_state.pending_question = question
             st.rerun()

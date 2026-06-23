@@ -11,7 +11,10 @@ now lives in the ``langchain_classic`` package (it was in ``langchain.*`` in the
 0.2.x era the PLAN was written against).
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import json
+import re
 
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.language_models import BaseLanguageModel
@@ -41,8 +44,13 @@ from config import (
     LLM_REPETITION_PENALTY,
     LLM_FREQUENCY_PENALTY,
     CITATION_MAX_SOURCES,
+    EXAMPLE_QUESTIONS,
+    SUGGESTED_QUESTION_COUNT,
+    SUGGESTED_QUESTION_RETRIEVAL_QUERY,
 )
 from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
+from utils import format_llm_error
+from vector_store import get_indexed_filenames, retrieve_balanced_documents
 
 
 def get_llm(
@@ -237,9 +245,128 @@ def query_chain(
         }
     except Exception as e:
         return {
-            "answer": f"Error generating answer: {e}",
+            "answer": format_llm_error(e),
             "source_documents": [],
         }
+
+
+def _parse_suggested_questions(raw_text: str, count: int) -> List[str]:
+    """Parse an LLM response into a short list of user-facing questions."""
+    text = (raw_text or "").strip()
+    if not text:
+        return []
+
+    candidates: List[str] = []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            candidates = [str(item).strip() for item in parsed if str(item).strip()]
+    except json.JSONDecodeError:
+        match = re.search(r"\[[\s\S]*\]", text)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+                if isinstance(parsed, list):
+                    candidates = [
+                        str(item).strip() for item in parsed if str(item).strip()
+                    ]
+            except json.JSONDecodeError:
+                pass
+
+    if not candidates:
+        for line in text.splitlines():
+            cleaned = re.sub(r"^[\s\d\-\*\.\)]+", "", line).strip().strip("\"'")
+            if cleaned:
+                candidates.append(cleaned)
+
+    questions: List[str] = []
+    for item in candidates:
+        question = item.strip().strip("\"'")
+        if not question:
+            continue
+        if not question.endswith("?"):
+            question = f"{question.rstrip('.')}?"
+        if len(question) < 12 or len(question) > 160:
+            continue
+        if question not in questions:
+            questions.append(question)
+        if len(questions) >= count:
+            break
+    return questions
+
+
+def generate_suggested_questions(
+    vector_store,
+    indexed_files: Optional[List[str]] = None,
+    *,
+    count: int = SUGGESTED_QUESTION_COUNT,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> List[str]:
+    """Generate starter questions grounded in indexed PDF content.
+
+    Retrieves representative chunks from every indexed file, then asks the
+    configured LLM for practical questions a user could ask about that content.
+
+    Args:
+        vector_store: Chroma vector store with indexed chunks.
+        indexed_files: Optional list of indexed filenames; inferred if omitted.
+        count: Number of questions to return.
+        llm_provider: Optional LLM provider override.
+        llm_model: Optional LLM model override.
+
+    Returns:
+        A list of question strings, or ``EXAMPLE_QUESTIONS`` on failure.
+    """
+    filenames = list(indexed_files or [])
+    if not filenames and vector_store is not None:
+        filenames = get_indexed_filenames(vector_store)
+    if not vector_store or not filenames:
+        return list(EXAMPLE_QUESTIONS[:count])
+
+    documents = retrieve_balanced_documents(
+        vector_store,
+        SUGGESTED_QUESTION_RETRIEVAL_QUERY,
+        per_file_k=2,
+    )
+    if not documents:
+        return list(EXAMPLE_QUESTIONS[:count])
+
+    labeled_docs = [ensure_page_label(doc) for doc in documents]
+    context = "\n\n".join(
+        f"[From {doc.metadata.get('source', 'Unknown')}, "
+        f"page {doc.metadata.get('page_label', '?')}]\n{doc.page_content}"
+        for doc in labeled_docs
+    )
+    file_list = ", ".join(filenames)
+    prompt = (
+        "You help users explore uploaded PDF documents. Based ONLY on the "
+        "context below, suggest "
+        f"{count} specific, practical questions a user could ask about this "
+        "content. Each question must be answerable from the documents. "
+        "Use concrete wording from the material (for example, if the PDF "
+        "describes paid leave, ask 'How many paid leave days are available?' "
+        "or 'How do you apply for paid leave?'). Avoid generic prompts like "
+        "'What are the key points?' or 'Summarise the documents.'\n\n"
+        f"Indexed files: {file_list}\n\n"
+        "Return ONLY a JSON array of strings. Example:\n"
+        '["How many paid leave days are available?", '
+        '"How do you apply for paid leave?"]\n\n'
+        f"Context:\n{context}"
+    )
+
+    try:
+        response = get_llm(
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+        ).invoke(prompt)
+        raw = getattr(response, "content", str(response))
+        questions = _parse_suggested_questions(raw, count)
+        if questions:
+            return questions
+    except Exception:
+        pass
+    return list(EXAMPLE_QUESTIONS[:count])
 
 
 def answer_from_documents(
@@ -296,7 +423,7 @@ def answer_from_documents(
         return {"answer": answer, "source_documents": cited}
     except Exception as e:
         return {
-            "answer": f"Error generating answer: {e}",
+            "answer": format_llm_error(e),
             "source_documents": [],
         }
 

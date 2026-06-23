@@ -24,13 +24,6 @@ const DOT_CLASSES = {
   amber2: 'bg-amber2-500',
 }
 
-const SUGGESTED = [
-  'What changed year over year?',
-  'Summarise the FX exposure',
-  'List the renewal cliffs',
-  'Pull the cash flow figures',
-]
-
 function Toast({ message, kind, onDone }) {
   useEffect(() => {
     const timer = setTimeout(onDone, 2400)
@@ -110,6 +103,7 @@ export default function Dashboard() {
   const [availableModels, setAvailableModels] = useState([])
   const [selectedModelLabel, setSelectedModelLabel] = useState('')
   const [messages, setMessages] = useState([])
+  const [suggestedQuestions, setSuggestedQuestions] = useState([])
   const [pendingFiles, setPendingFiles] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
@@ -143,6 +137,7 @@ export default function Dashboard() {
       setSelectedModelLabel(label)
     }
     setMessages(data.messages || [])
+    setSuggestedQuestions(data.suggested_questions || data.example_questions || [])
     if (data.streamlit_url) setStreamlitUrl(data.streamlit_url)
     return data
   }, [])
@@ -206,6 +201,9 @@ export default function Dashboard() {
       )
       if (result.indexed_files) {
         setIndexedFiles(result.indexed_files)
+      }
+      if (result.suggested_questions?.length) {
+        setSuggestedQuestions(result.suggested_questions)
       }
       await refreshStatus()
       const hasWarnings = (result.failed?.length || 0) + (result.invalid?.length || 0) > 0
@@ -522,6 +520,20 @@ export default function Dashboard() {
                         ? 'Type a question below or pick a suggested prompt. Answers will cite the source PDF + page.'
                         : 'Drop one or more PDFs in the sidebar and hit Process PDFs. The chat unlocks once your index is built.'}
                     </p>
+                    {indexedFiles.length > 0 && suggestedQuestions.length > 0 && (
+                      <div className="mt-8 flex flex-wrap gap-2 justify-center">
+                        {suggestedQuestions.map((prompt) => (
+                          <button
+                            key={prompt}
+                            type="button"
+                            className="btn h-12 px-5 rounded-md bg-muted hover:bg-brand-50 hover:text-brand-600 text-sm font-semibold"
+                            onClick={() => handleSend(prompt)}
+                          >
+                            {prompt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -535,11 +547,11 @@ export default function Dashboard() {
               )}
             </div>
 
-            {indexedFiles.length > 0 && (
+            {indexedFiles.length > 0 && suggestedQuestions.length > 0 && (
               <div className="px-8 pb-3">
-                <div className="label text-ink/50 mb-3">Suggested follow-ups</div>
+                <div className="label text-ink/50 mb-3">Suggested questions</div>
                 <div className="flex flex-wrap gap-2">
-                  {SUGGESTED.map((prompt) => (
+                  {suggestedQuestions.map((prompt) => (
                     <button
                       key={prompt}
                       type="button"

@@ -14,7 +14,8 @@ Multi-PDF ChatBot lets you:
 - Upload **one or more PDF files** into a shared knowledge base
 - Ask **natural-language questions** answered from your PDF content only
 - See **which PDF and page** each answer came from (source citations)
-- **Click a source** to open a highlighted PDF preview (React UI)
+- **Click a source** to open a highlighted PDF preview (React UI) — highlights target the cited line when available
+- **Switch AI models** from a **Models** dropdown (OpenRouter, Groq, Nvidia, Gemini — whichever keys are configured)
 - Continue a **conversation** — follow-up questions remember prior turns
 
 > **Important:** The app works with **text-based PDFs** (you can select/copy text in the file). Scanned or image-only PDFs are **not supported** yet.
@@ -58,7 +59,15 @@ The React app uses a free-tier API host that **sleeps after ~15 minutes of inact
 
 ![Landing page](screenshots/react-landing.png)
 
-### 4.2 Upload PDFs
+### 4.2 Choose a model (optional)
+
+1. In the **sidebar**, open the **Models** dropdown
+2. Pick a provider/model (e.g. OpenRouter, Groq, Nvidia, Gemini)
+3. The selection applies to **this session only** — new chats after refresh use the default until you change it again
+
+Only models whose API keys are configured on the server appear in the list.
+
+### 4.3 Upload PDFs
 
 1. In the **sidebar**, drag and drop PDF files or use the file picker
 2. You can queue **multiple files** before processing
@@ -69,11 +78,11 @@ The React app uses a free-tier API host that **sleeps after ~15 minutes of inact
 
 **Tips**
 
-- Only **new filenames** are indexed. If you upload `report.pdf` twice, the second upload is skipped.
-- To re-index an updated file, **rename it** (e.g. `report-v2.pdf`) before uploading.
+- **Duplicate filenames are rejected.** If you upload `report.pdf` twice (in one batch or after it is already indexed), you see: *you cannot add same file twice*, with a reference to the existing document.
+- To index updated content under a new name, **rename the file** (e.g. `report-v2.pdf`) before uploading.
 - Invalid or empty files are skipped with a message.
 
-### 4.3 Ask questions
+### 4.4 Ask questions
 
 1. Type your question in the chat input at the bottom
 2. Press Enter or click Send
@@ -94,17 +103,17 @@ The React app uses a free-tier API host that **sleeps after ~15 minutes of inact
 
 Follow-up questions work naturally: "Can you elaborate on the second point?" remembers the conversation.
 
-### 4.4 View a source (highlighted preview)
+### 4.5 View a source (highlighted preview)
 
 1. Click any **source chip** under an answer
 2. A **right-side panel** opens (~50% of the screen) showing the PDF page
-3. The relevant passage is **highlighted in yellow**
+3. The relevant passage is **highlighted in yellow** — when a line number is cited, the highlight focuses on that line rather than the whole page
 4. Use **Download** to save the annotated page as a PDF
 5. Click **Close** or the X to dismiss the panel
 
 ![Source preview panel](screenshots/react-source-preview.png)
 
-### 4.5 Session controls
+### 4.6 Session controls
 
 | Button | What it does |
 |--------|--------------|
@@ -121,7 +130,12 @@ Use **Clear chat** when you want a new topic but keep your documents. Use **Rese
 
 Go to https://multi-pdf-chatbot-rb.streamlit.app/
 
-### 5.2 Upload and process
+### 5.2 Choose a model (optional)
+
+1. In the **sidebar**, use the **Models** dropdown to pick a provider/model
+2. Your choice applies to the current Streamlit session
+
+### 5.3 Upload and process
 
 1. Use the **sidebar** file uploader to select one or more PDFs
 2. Click **Process PDFs**
@@ -129,15 +143,17 @@ Go to https://multi-pdf-chatbot-rb.streamlit.app/
 
 ![Streamlit sidebar upload](screenshots/streamlit-upload.png)
 
-### 5.3 Chat and citations
+Duplicate filenames in the same upload or already in the index show an error: *you cannot add same file twice*, with the existing document reference.
+
+### 5.4 Chat and citations
 
 1. Type a question in the chat input
 2. Read the answer and source citations below it
-3. **Click a citation** to preview the highlighted page (shown as a PNG image)
+3. **Click a citation** to preview the highlighted page (shown as a PNG image), with line-aware highlighting when line metadata is available
 
 ![Streamlit chat with citations](screenshots/streamlit-chat.png)
 
-### 5.4 Session controls
+### 5.5 Session controls
 
 | Button | What it does |
 |--------|--------------|
@@ -151,8 +167,11 @@ Go to https://multi-pdf-chatbot-rb.streamlit.app/
 | Feature | React UI | Streamlit |
 |---------|----------|-----------|
 | Landing page | Yes | No |
+| Models dropdown | Yes (sidebar) | Yes (sidebar) |
 | Source preview | Side panel + download | Inline PNG preview |
+| Line-aware highlights | Yes | Yes |
 | Multi-PDF balanced answers | Yes | Yes |
+| Duplicate upload handling | Reject with error | Reject with error |
 | Session persistence after refresh | No (new session) | No |
 | Cold start delay | Yes (API on Render) | Minimal |
 | Recommended for demos | Yes | Alternate / backup |
@@ -175,6 +194,7 @@ Each source shows:
 
 - **File name** — which PDF the passage came from
 - **Page number** — which page (1-based, human-readable)
+- **Line** (when available) — narrows the highlight to the cited line in the preview
 
 Chip colors are for visual distinction only — they do not indicate processing status.
 
@@ -190,8 +210,9 @@ For questions like "Summarise each document" or "What is each PDF about?", uploa
 2. **Use specific filenames** when you have many PDFs: "What does `policy-2024.pdf` say about refunds?"
 3. **One clear topic per question** often works better than very long compound questions.
 4. **Wait for indexing to finish** before chatting — the Process button must complete successfully.
-5. **Rename files to re-index** — same filename uploads are skipped by design.
-6. **Be patient on first load** — the React API may need time to wake from sleep.
+5. **Avoid duplicate filenames** — the app rejects the same name twice; rename files if you need a new version indexed.
+6. **Try another model** from the Models dropdown if answers are slow or low quality (depends on which providers are configured).
+7. **Be patient on first load** — the React API may need time to wake from sleep.
 
 ---
 
@@ -204,7 +225,9 @@ For questions like "Summarise each document" or "What is each PDF about?", uploa
 | Answer mentions only one PDF | Asked before all files indexed | Process all PDFs, then ask "What is each PDF about?" |
 | Source preview empty or error | Server restarted; PDFs cleared from disk | Click **Reset session**, re-upload all PDFs |
 | "I don't have enough information…" | Topic not in documents | Rephrase; confirm the right PDF is indexed |
-| Same file not re-indexed | Filename dedup | Rename the file and upload again |
+| Duplicate file upload rejected | Same filename in batch or already indexed | Use a new filename, or reset session if you need a clean index |
+| "you cannot add same file twice" | Intentional duplicate guard | Check the existing document reference shown in the error |
+| Same file not re-indexed | Duplicate rejection by filename | Rename the file and upload again |
 | Chat history gone after refresh | Session-scoped by design | Re-ask your question; PDFs may still be indexed if session restored |
 | Slow first response | Embedding model + LLM loading | Normal on cold start; subsequent questions are faster |
 
@@ -227,8 +250,11 @@ No. Refreshing the browser starts a new session. Indexed PDFs may persist on dis
 **Can I use Word or Excel files?**  
 Not currently — only `.pdf` files are supported.
 
-**Why was my file skipped?**  
-Either it was already indexed (same filename) or it failed validation (not a PDF, empty, or no extractable text).
+**Why was my upload rejected?**  
+Either the **same filename** was already indexed or appeared twice in one upload batch (*you cannot add same file twice*), or the file failed validation (not a PDF, empty, or no extractable text).
+
+**Can I change the AI model?**  
+Yes. Use the **Models** dropdown in the sidebar (React or Streamlit). Only providers with API keys configured on the server are listed.
 
 ---
 
@@ -239,7 +265,14 @@ If you want to run the app on your own machine:
 ```bash
 # Clone the repo, create venv, install deps
 pip install -r requirements.txt
-cp .env.example .env   # add your OPENROUTER_API_KEY
+cp .env.example .env   # add API keys for at least one provider
+
+# Example keys in .env (set whichever providers you use):
+# OPENROUTER_API_KEY=...
+# GROQ_API_KEY=...
+# NVIDIA_API_KEY=...
+# GOOGLE_API_KEY=...          # Gemini
+# LLM_PROVIDER=openrouter       # default provider
 
 # React + API (recommended)
 python run_dev.py
@@ -278,4 +311,4 @@ For technical depth, see [DESIGN.md](./DESIGN.md).
 
 ---
 
-*Last updated for the React + FastAPI + Streamlit PoC deployment.*
+*Last updated for multi-provider LLM support, Models dropdown, duplicate upload rejection, and line-aware source highlighting.*
