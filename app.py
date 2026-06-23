@@ -24,7 +24,12 @@ _apply_streamlit_secrets()
 
 import streamlit as st
 
-from config import EXAMPLE_QUESTIONS, APP_NAME
+from config import (
+    APP_NAME,
+    EXAMPLE_QUESTIONS,
+    get_available_llm_options,
+    get_default_llm_option,
+)
 from pdf_processor import load_pdfs, split_documents, filter_new_files
 from pdf_storage import clear_all_pdfs, delete_pdf, save_uploaded_pdf
 from source_viewer import dismiss_pdf_viewer, render_pdf_viewer_modal, render_source_citations
@@ -146,6 +151,11 @@ def initialise_session_state():
         st.session_state.pdf_viewer_payload = None
     if "pdf_viewer_stage" not in st.session_state:
         st.session_state.pdf_viewer_stage = "idle"
+    if "selected_llm_provider" not in st.session_state:
+        default_llm = get_default_llm_option()
+        st.session_state.selected_llm_provider = default_llm["provider"]
+        st.session_state.selected_llm_model = default_llm["model"]
+        st.session_state.selected_llm_label = default_llm["label"]
     if "vector_store" not in st.session_state:
         vector_store = load_existing_vector_store()
         st.session_state.vector_store = vector_store
@@ -154,7 +164,10 @@ def initialise_session_state():
             if st.session_state.indexed_files:
                 retriever = get_retriever(vector_store)
                 st.session_state.chain = build_rag_chain(
-                    retriever, st.session_state.memory
+                    retriever,
+                    st.session_state.memory,
+                    llm_provider=st.session_state.selected_llm_provider,
+                    llm_model=st.session_state.selected_llm_model,
                 )
 
 
@@ -171,10 +184,46 @@ def rebuild_chain():
     if st.session_state.indexed_files:
         retriever = get_retriever(vector_store)
         st.session_state.chain = build_rag_chain(
-            retriever, st.session_state.memory
+            retriever,
+            st.session_state.memory,
+            llm_provider=st.session_state.selected_llm_provider,
+            llm_model=st.session_state.selected_llm_model,
         )
     else:
         st.session_state.chain = None
+
+
+def _apply_selected_model(label: str) -> None:
+    """Persist the selected model option and rebuild the chain if needed."""
+    options = get_available_llm_options()
+    selected = next(
+        (option for option in options if option["label"] == label),
+        None,
+    )
+    if selected is None:
+        return
+
+    changed = (
+        st.session_state.get("selected_llm_provider") != selected["provider"]
+        or st.session_state.get("selected_llm_model") != selected["model"]
+    )
+    st.session_state.selected_llm_provider = selected["provider"]
+    st.session_state.selected_llm_model = selected["model"]
+    st.session_state.selected_llm_label = selected["label"]
+
+    if changed and st.session_state.get("indexed_files"):
+        rebuild_chain()
+
+
+def _existing_doc_reference(filename: str) -> str:
+    """Return a short reference string for an indexed document."""
+    for item in st.session_state.get("indexed_files", []):
+        if item.get("name") == filename:
+            return (
+                f"{item['name']} ({item.get('pages', 0)} pages, "
+                f"{item.get('chunks', 0)} chunks)"
+            )
+    return filename
 
 
 def process_uploaded_pdfs(uploaded_files):
@@ -191,7 +240,12 @@ def process_uploaded_pdfs(uploaded_files):
     if invalid_files:
         st.error(f"Invalid files skipped: {', '.join(invalid_files)}")
     if skipped:
-        st.info(f"{len(skipped)} file(s) already indexed, skipped.")
+        references = ", ".join(_existing_doc_reference(name) for name in skipped)
+        st.error(
+            "you cannot add same file twice. "
+            f"Existing doc reference: {references}"
+        )
+        return
 
     if not new_files:
         st.info("No new PDFs to process.")
@@ -235,8 +289,6 @@ def clear_chat():
     st.session_state.pdf_viewer_stage = "cleanup"
     st.session_state.messages = []
     st.session_state.memory = get_memory()
-    if st.session_state.chain is not None:
-        st.session_state.chain.memory = st.session_state.memory
 
 
 def reset_session():
@@ -259,6 +311,22 @@ def render_sidebar():
     with st.sidebar:
         st.title("📚 Multi-PDF ChatBot")
         st.markdown("---")
+
+        model_options = get_available_llm_options()
+        if model_options:
+            labels = [option["label"] for option in model_options]
+            current_label = st.session_state.get("selected_llm_label", labels[0])
+            if current_label not in labels:
+                current_label = labels[0]
+            selected_label = st.selectbox(
+                "Models",
+                labels,
+                index=labels.index(current_label),
+                help="Choose which configured LLM the chatbot should use.",
+            )
+            _apply_selected_model(selected_label)
+        else:
+            st.warning("No usable LLM models found. Add at least one API key.")
 
         uploaded_files = st.file_uploader(
             "Upload PDF files",
@@ -400,12 +468,15 @@ def answer_prompt(prompt: str) -> dict:
         )
         if page_docs:
             result = answer_from_documents(
-                prompt, page_docs, vector_store=st.session_state.vector_store
+                prompt,
+                page_docs,
+                vector_store=st.session_state.vector_store,
+                llm_provider=st.session_state.selected_llm_provider,
+                llm_model=st.session_state.selected_llm_model,
             )
             try:
-                st.session_state.memory.save_context(
-                    {"question": prompt}, {"answer": result["answer"]}
-                )
+                st.session_state.memory.add_user_message(prompt)
+                st.session_state.memory.add_ai_message(result["answer"])
             except Exception:
                 pass
             return result
@@ -422,16 +493,22 @@ def answer_prompt(prompt: str) -> dict:
             prompt,
             overview_docs,
             vector_store=st.session_state.vector_store,
+            llm_provider=st.session_state.selected_llm_provider,
+            llm_model=st.session_state.selected_llm_model,
         )
         try:
-            st.session_state.memory.save_context(
-                {"question": prompt}, {"answer": result["answer"]}
-            )
+            st.session_state.memory.add_user_message(prompt)
+            st.session_state.memory.add_ai_message(result["answer"])
         except Exception:
             pass
         return result
 
-    return query_chain(st.session_state.chain, prompt, st.session_state.vector_store)
+    return query_chain(
+        st.session_state.chain,
+        prompt,
+        st.session_state.vector_store,
+        chat_history=st.session_state.memory,
+    )
 
 
 def render_chat():

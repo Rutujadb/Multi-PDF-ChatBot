@@ -98,6 +98,15 @@ def _lexical_overlap_score(answer: str, chunk: str) -> float:
     return len(answer_terms & chunk_terms) / len(answer_terms)
 
 
+def _question_overlap_score(question: str, chunk: str) -> float:
+    """Score overlap between the question terms and a candidate chunk."""
+    question_terms = _significant_terms(question)
+    if not question_terms:
+        return 0.0
+    chunk_terms = _significant_terms(chunk)
+    return len(question_terms & chunk_terms) / len(question_terms)
+
+
 def extract_answer_phrases(answer: str) -> List[str]:
     """Return distinctive phrases from an answer for PDF highlighting."""
     phrases: List[str] = []
@@ -164,6 +173,30 @@ def best_excerpt_fragments(answer: str, excerpt: str, limit: int = 5) -> List[st
     return fragments[:limit]
 
 
+def best_matching_fragment(answer: str, excerpt: str) -> str:
+    """Return the single best excerpt fragment for a precise citation highlight."""
+    fragments = best_excerpt_fragments(answer, excerpt, limit=1)
+    return fragments[0] if fragments else ""
+
+
+def adjusted_line_for_fragment(doc: Document, fragment: str) -> Optional[int]:
+    """Return a tighter line number by locating the best fragment inside a chunk."""
+    if not fragment:
+        return (doc.metadata or {}).get("line")
+
+    base_line = (doc.metadata or {}).get("line")
+    if not isinstance(base_line, int):
+        return base_line
+
+    content = doc.page_content or ""
+    start = content.lower().find(fragment.lower())
+    if start < 0:
+        return base_line
+
+    line_offset = content[:start].count("\n")
+    return base_line + line_offset
+
+
 def count_answer_phrase_hits(answer: str, content: str) -> int:
     """Count how many answer phrases appear in a chunk."""
     lowered = (content or "").lower()
@@ -217,12 +250,12 @@ def _chunk_supports_answer(
     relaxed: bool = False,
 ) -> bool:
     """Return True when a chunk is a reasonable citation for the answer."""
-    margin = 0.22 if relaxed else 0.18
-    close_to_top = combined >= max(0.28 if relaxed else 0.30, top_combined - margin)
+    margin = 0.18 if relaxed else 0.12
+    close_to_top = combined >= max(0.34 if relaxed else 0.38, top_combined - margin)
     supports_answer = (
-        answer_sim >= (0.22 if relaxed else 0.26)
-        or lexical >= (0.05 if relaxed else 0.08)
-        or phrase_hits >= 1
+        answer_sim >= (0.26 if relaxed else 0.31)
+        or lexical >= (0.09 if relaxed else 0.14)
+        or phrase_hits >= (1 if relaxed else 2)
     )
     return close_to_top and supports_answer
 
@@ -306,22 +339,27 @@ def resolve_citation_sources(
         " " in phrase or len(phrase) >= 6 for phrase in answer_phrases
     )
 
-    scored: List[Tuple[float, float, float, int, Document]] = []
+    scored: List[Tuple[float, float, float, float, int, Document]] = []
     for doc in unique:
         content = doc.page_content or ""
         chunk_vec = embeddings.embed_query(content[:2000])
         answer_sim = _cosine_similarity(answer_vec, chunk_vec)
         question_sim = _cosine_similarity(question_vec, chunk_vec)
         lexical = _lexical_overlap_score(answer, content)
+        question_overlap = _question_overlap_score(question, content)
         phrase_hits = count_answer_phrase_hits(answer, content)
         phrase_boost = min(phrase_hits, 3) * 0.12
+        filename = str((doc.metadata or {}).get("source", ""))
+        filename_boost = 0.10 if filename and filename.lower() in answer.lower() else 0.0
         combined = (
-            0.50 * answer_sim
-            + 0.22 * question_sim
+            0.52 * answer_sim
+            + 0.16 * question_sim
             + 0.18 * lexical
+            + 0.08 * question_overlap
             + phrase_boost
+            + filename_boost
         )
-        scored.append((combined, answer_sim, lexical, phrase_hits, doc))
+        scored.append((combined, answer_sim, lexical, question_overlap, phrase_hits, doc))
 
     scored.sort(key=lambda item: item[0], reverse=True)
     top_combined = scored[0][0]
@@ -365,7 +403,7 @@ def resolve_citation_sources(
     if multi_doc_answer:
         files_to_cover = target_files if len(target_files) >= 2 else unique_sources
         for filename in files_to_cover:
-            for combined, answer_sim, lexical, phrase_hits, doc in scored:
+            for combined, answer_sim, lexical, question_overlap, phrase_hits, doc in scored:
                 if (doc.metadata or {}).get("source") != filename:
                     continue
                 if _chunk_supports_answer(
@@ -379,21 +417,18 @@ def resolve_citation_sources(
                     _add_doc(doc)
                     break
 
-    for combined, answer_sim, lexical, phrase_hits, doc in scored:
+    for combined, answer_sim, lexical, question_overlap, phrase_hits, doc in scored:
         if len(selected) >= effective_max:
             break
         if _chunk_supports_answer(
             combined, answer_sim, lexical, phrase_hits, top_combined
-        ):
+        ) and (question_overlap >= 0.06 or answer_sim >= 0.34 or phrase_hits >= 1):
             _add_doc(doc)
 
     if not selected:
-        for combined, answer_sim, lexical, phrase_hits, doc in scored:
+        for combined, answer_sim, lexical, question_overlap, phrase_hits, doc in scored:
             if len(selected) >= effective_max:
                 break
-            question_overlap = _lexical_overlap_score(
-                question, doc.page_content or ""
-            )
             if question_overlap >= 0.20 and combined >= max(0.30, top_combined - 0.12):
                 _add_doc(doc)
 

@@ -122,9 +122,11 @@ def filter_new_files(uploaded_files, already_indexed: List[str]):
     """
     new_files = []
     skipped: List[str] = []
+    seen_names = set(already_indexed)
     for f in uploaded_files:
-        if f.name in already_indexed:
+        if f.name in seen_names:
             skipped.append(f.name)
         else:
             new_files.append(f)
+            seen_names.add(f.name)
     return new_files, skipped

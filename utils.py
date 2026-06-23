@@ -9,7 +9,12 @@ from typing import List, Optional, Tuple
 
 from langchain_core.documents import Document
 
-from citation_utils import best_excerpt_fragments, extract_answer_phrases
+from citation_utils import (
+    adjusted_line_for_fragment,
+    best_excerpt_fragments,
+    best_matching_fragment,
+    extract_answer_phrases,
+)
 
 _PAGE_RE = re.compile(r"page\s*(\d+)", re.IGNORECASE)
 
@@ -144,13 +149,16 @@ def extract_source_items(
                     phrase_seen.add(key_phrase)
                     highlight_phrases.append(fragment)
 
+        precise_excerpt = best_matching_fragment(answer or "", excerpt) or excerpt
+        precise_line = adjusted_line_for_fragment(doc, precise_excerpt)
+
         items.append(
             {
                 "file": source,
                 "page": int(page) if str(page).isdigit() else page,
-                "line": line,
-                "excerpt": excerpt,
-                "label": _source_label(source, page, line),
+                "line": precise_line,
+                "excerpt": precise_excerpt,
+                "label": _source_label(source, page, precise_line),
                 "highlight_phrases": highlight_phrases,
             }
         )

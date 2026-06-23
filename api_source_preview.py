@@ -96,6 +96,36 @@ def _highlight_by_line(page, line_num: int) -> bool:
     return False
 
 
+def _line_rect(page, line_num: int):
+    """Return the bounding box for a 1-based line number on the page."""
+    import fitz
+
+    if not line_num or line_num < 1:
+        return None
+
+    current_line = 0
+    page_dict = page.get_text("dict")
+    for block in page_dict.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            current_line += 1
+            if current_line == int(line_num):
+                return fitz.Rect(line["bbox"])
+    return None
+
+
+def _rects_near_line(rects: list, line_rect) -> list:
+    """Keep only search hits that overlap the cited line area."""
+    if not rects or line_rect is None:
+        return rects
+    narrowed = []
+    for rect in rects:
+        if rect.intersects(line_rect) or abs(rect.y0 - line_rect.y0) <= 6:
+            narrowed.append(rect)
+    return narrowed or rects
+
+
 def build_highlighted_page_pdf(
     pdf_path: Path,
     page_num: int,
@@ -115,6 +145,7 @@ def build_highlighted_page_pdf(
         page = doc[page_idx]
         highlighted = False
         excerpt_clean = " ".join((excerpt or "").split())
+        target_line_rect = _line_rect(page, line_num) if line_num else None
 
         unique_phrases: List[str] = []
         seen_phrases = set()
@@ -127,24 +158,23 @@ def build_highlighted_page_pdf(
         unique_phrases.sort(key=len, reverse=True)
 
         for phrase in unique_phrases:
-            rects = _search_page_text(page, phrase)
+            rects = _rects_near_line(_search_page_text(page, phrase), target_line_rect)
             if _highlight_rects(page, rects):
                 highlighted = True
+                if target_line_rect is not None:
+                    break
 
         if not highlighted and excerpt_clean:
-            for fragment in unique_phrases:
-                if fragment.lower() in excerpt_clean.lower():
-                    rects = _search_page_text(page, fragment)
-                    if _highlight_rects(page, rects):
-                        highlighted = True
-                        break
+            rects = _rects_near_line(_search_page_text(page, excerpt_clean), target_line_rect)
+            if _highlight_rects(page, rects, limit=2):
+                highlighted = True
 
         if not highlighted and excerpt_clean:
             for length in (180, 140, 100, 70, 45):
                 fragment = excerpt_clean[:length].strip()
                 if len(fragment) < 12:
                     break
-                rects = _search_page_text(page, fragment)
+                rects = _rects_near_line(_search_page_text(page, fragment), target_line_rect)
                 if _highlight_rects(page, rects):
                     highlighted = True
                     break
@@ -154,7 +184,7 @@ def build_highlighted_page_pdf(
                 fragment = excerpt_clean[start : start + 100].strip()
                 if len(fragment) < 20:
                     continue
-                rects = _search_page_text(page, fragment)
+                rects = _rects_near_line(_search_page_text(page, fragment), target_line_rect)
                 if _highlight_rects(page, rects):
                     highlighted = True
                     break
