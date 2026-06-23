@@ -257,29 +257,50 @@ def _parse_suggested_questions(raw_text: str, count: int) -> List[str]:
         return []
 
     candidates: List[str] = []
+    seen_candidates: set[str] = set()
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list):
-            candidates = [str(item).strip() for item in parsed if str(item).strip()]
+            for item in parsed:
+                cleaned = str(item).strip()
+                if not cleaned:
+                    continue
+                key = cleaned.lower()
+                if key in seen_candidates:
+                    continue
+                seen_candidates.add(key)
+                candidates.append(cleaned)
     except json.JSONDecodeError:
         match = re.search(r"\[[\s\S]*\]", text)
         if match:
             try:
                 parsed = json.loads(match.group(0))
                 if isinstance(parsed, list):
-                    candidates = [
-                        str(item).strip() for item in parsed if str(item).strip()
-                    ]
+                    for item in parsed:
+                        cleaned = str(item).strip()
+                        if not cleaned:
+                            continue
+                        key = cleaned.lower()
+                        if key in seen_candidates:
+                            continue
+                        seen_candidates.add(key)
+                        candidates.append(cleaned)
             except json.JSONDecodeError:
                 pass
 
     if not candidates:
         for line in text.splitlines():
             cleaned = re.sub(r"^[\s\d\-\*\.\)]+", "", line).strip().strip("\"'")
-            if cleaned:
-                candidates.append(cleaned)
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen_candidates:
+                continue
+            seen_candidates.add(key)
+            candidates.append(cleaned)
 
     questions: List[str] = []
+    seen_questions: set[str] = set()
     for item in candidates:
         question = item.strip().strip("\"'")
         if not question:
@@ -288,8 +309,11 @@ def _parse_suggested_questions(raw_text: str, count: int) -> List[str]:
             question = f"{question.rstrip('.')}?"
         if len(question) < 12 or len(question) > 160:
             continue
-        if question not in questions:
-            questions.append(question)
+        key = question.lower()
+        if key in seen_questions:
+            continue
+        seen_questions.add(key)
+        questions.append(question)
         if len(questions) >= count:
             break
     return questions

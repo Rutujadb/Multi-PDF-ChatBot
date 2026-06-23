@@ -163,19 +163,22 @@ export default function Dashboard() {
     }
     setPendingFiles((prev) => {
       const next = [...prev]
+      const indexedNames = new Set(indexedFiles.map((file) => file.name))
+      const pendingNames = new Set(next.map((file) => file.name))
       pdfs.forEach((file) => {
-        const indexed = indexedFiles.find((f) => f.name === file.name)
-        if (indexed) {
+        if (indexedNames.has(file.name)) {
+          const indexed = indexedFiles.find((f) => f.name === file.name)
           pushToast(
             `you cannot add same file twice. Existing doc reference: ${indexed.name} (${indexed.pages} pages, ${indexed.chunks} chunks)`,
             'warn'
           )
           return
         }
-        if (next.some((p) => p.name === file.name)) {
+        if (pendingNames.has(file.name)) {
           pushToast(`you cannot add same file twice. Existing doc reference: ${file.name}`, 'warn')
           return
         }
+        pendingNames.add(file.name)
         next.push(file)
       })
       return next
@@ -191,12 +194,13 @@ export default function Dashboard() {
       const failed = new Set(result.failed || [])
       const invalid = new Set(result.invalid || [])
       const skipped = new Set(result.skipped || [])
+      const indexedNames = new Set((result.indexed_files || []).map((file) => file.name))
       setPendingFiles((prev) =>
         prev.filter(
           (file) =>
             failed.has(file.name) ||
             invalid.has(file.name) ||
-            (skipped.has(file.name) && !result.indexed_files?.some((f) => f.name === file.name))
+            (skipped.has(file.name) && !indexedNames.has(file.name))
         )
       )
       if (result.indexed_files) {

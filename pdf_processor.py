@@ -36,7 +36,7 @@ def load_pdfs(uploaded_files) -> Tuple[List[Document], List[str]]:
             - List of filenames that failed to load.
     """
     all_documents: List[Document] = []
-    failed_files: List[str] = []
+    failed_files: set[str] = set()
 
     for uploaded_file in uploaded_files:
         tmp_path = None
@@ -58,12 +58,12 @@ def load_pdfs(uploaded_files) -> Tuple[List[Document], List[str]]:
 
             all_documents.extend(documents)
         except Exception:
-            failed_files.append(uploaded_file.name)
+            failed_files.add(uploaded_file.name)
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
-    return all_documents, failed_files
+    return all_documents, list(failed_files)
 
 
 def split_documents(documents: List[Document]) -> List[Document]:
@@ -121,12 +121,12 @@ def filter_new_files(uploaded_files, already_indexed: List[str]):
             - skipped_filenames: names of files already indexed.
     """
     new_files = []
-    skipped: List[str] = []
+    skipped: set[str] = set()
     seen_names = set(already_indexed)
     for f in uploaded_files:
         if f.name in seen_names:
-            skipped.append(f.name)
+            skipped.add(f.name)
         else:
             new_files.append(f)
             seen_names.add(f.name)
-    return new_files, skipped
+    return new_files, list(skipped)
