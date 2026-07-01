@@ -48,6 +48,12 @@ from api_upload import (
     validate_api_pdf_files,
 )
 from pdf_processor import split_documents
+from pdf_image_pipeline import (
+    build_caption_chunks_for_sources,
+    enrich_indexed_files_with_image_counts,
+    process_pdf_images,
+)
+from pdf_storage import get_pdf_path
 from utils import (
     extract_source_items,
     format_sources,
@@ -166,7 +172,7 @@ class AppSession:
             else []
         )
         if self.indexed_files:
-            retriever = get_retriever(self.vector_store)
+            retriever = get_retriever(self.vector_store, self.session_id)
             self.chain = build_rag_chain(
                 retriever,
                 self.ensure_memory(),
@@ -341,6 +347,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
                 vector_store=session.vector_store,
                 llm_provider=session.llm_provider,
                 llm_model=session.llm_model,
+                session_id=session.session_id,
             )
             try:
                 session.ensure_memory().add_user_message(prompt)
@@ -368,6 +375,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
             vector_store=session.vector_store,
             llm_provider=session.llm_provider,
             llm_model=session.llm_model,
+            session_id=session.session_id,
         )
         try:
             session.ensure_memory().add_user_message(prompt)
@@ -474,9 +482,10 @@ def get_status(session_id: Optional[str] = None):
     ensure_session_vector_store(session)
     session.ensure_llm_selection()
     stats = index_stats(session.vector_store)
+    files = enrich_indexed_files_with_image_counts(session.session_id, stats["files"])
     return {
         "session_id": session.session_id,
-        "indexed_files": stats["files"],
+        "indexed_files": files,
         "stats": {
             "chunks": stats["total_chunks"],
             "pages": stats["total_pages"],
@@ -586,14 +595,38 @@ async def upload_pdfs(
             "indexed_files": stats["files"],
         }
 
-    documents, failed = load_buffered_pdfs(new_files)
-    if not documents:
-        detail = "No readable text found in the uploaded PDF(s)."
-        if failed:
-            detail += f" Could not read: {', '.join(failed)}."
-        raise HTTPException(status_code=400, detail=detail)
+    persist_api_uploads(new_files)
+    image_summary = {"extracted": 0, "captioned": 0}
+    for upload in new_files:
+        pdf_path = get_pdf_path(upload.name)
+        if pdf_path is None:
+            continue
+        image_stats = process_pdf_images(session.session_id, upload.name, pdf_path)
+        image_summary["extracted"] += image_stats.get("extracted", 0)
+        image_summary["captioned"] += image_stats.get("captioned", 0)
 
-    chunks = split_documents(documents)
+    documents, failed = load_buffered_pdfs(new_files)
+    source_names = [upload.name for upload in new_files]
+
+    if not documents:
+        chunks = build_caption_chunks_for_sources(session.session_id, source_names)
+        if not chunks:
+            detail = "No readable text or image captions found in the uploaded PDF(s)."
+            if failed:
+                detail += f" Could not read: {', '.join(failed)}."
+            raise HTTPException(status_code=400, detail=detail)
+    else:
+        chunks = split_documents(documents)
+        chunks = [chunk for chunk in chunks if (chunk.page_content or "").strip()]
+        if not chunks:
+            chunks = build_caption_chunks_for_sources(session.session_id, source_names)
+
+    if not chunks:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not index the uploaded PDF(s). Add selectable text or enable image captioning.",
+        )
+
     persist_dir = session_chroma_dir(session.session_id)
     session.vector_store = create_or_update_vector_store(
         chunks,
@@ -601,15 +634,22 @@ async def upload_pdfs(
         existing_store=session.vector_store,
     )
     indexed_names = {
-        doc.metadata.get("source")
-        for doc in documents
-        if doc.metadata.get("source")
+        chunk.metadata.get("source")
+        for chunk in chunks
+        if chunk.metadata.get("source")
     }
-    persist_api_uploads(
-        [upload for upload in new_files if upload.name in indexed_names]
-    )
+
     session.rebuild_chain()
+    if not session.indexed_files or session.chain is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Indexing did not complete. Reset the session and try again.",
+        )
+
     stats = index_stats(session.vector_store)
+    indexed_files = enrich_indexed_files_with_image_counts(
+        session.session_id, stats["files"]
+    )
 
     indexed_count = len(indexed_names)
     message = f"{indexed_count} PDF(s) indexed."
@@ -624,7 +664,8 @@ async def upload_pdfs(
         "skipped": skipped,
         "invalid": invalid_files,
         "failed": failed,
-        "indexed_files": stats["files"],
+        "indexed_files": indexed_files,
+        "image_summary": image_summary,
         "suggested_questions": session.suggested_questions,
     }
 
@@ -689,6 +730,7 @@ def reset_session(session_id: Optional[str] = None):
         _retrieve,
     ) = _vector_store()
     from pdf_storage import delete_pdf
+    from image_store import delete_images_for_session
     from sqlite_memory import delete_session as db_delete_session
 
     session = get_session(session_id)
@@ -700,6 +742,7 @@ def reset_session(session_id: Optional[str] = None):
     if session_dir.exists():
         shutil.rmtree(session_dir, ignore_errors=True)
     db_delete_session(session.session_id)
+    delete_images_for_session(session.session_id)
     from sqlite_memory import create_session as db_create_session
 
     db_create_session(session.session_id)
@@ -715,6 +758,37 @@ def reset_session(session_id: Optional[str] = None):
         "messages": [],
         "indexed_files": [],
     }
+
+
+@app.get("/api/images")
+def list_pdf_images(
+    session_id: Optional[str] = None,
+    source: Optional[str] = None,
+    page: Optional[int] = None,
+):
+    """List extracted PDF images and captions for one session."""
+    from image_store import list_images
+
+    session = get_session(session_id)
+    images = list_images(session.session_id, source=source, page=page)
+    return {"images": images}
+
+
+@app.get("/api/images/{image_id}/file")
+def get_pdf_image_file(image_id: str, session_id: Optional[str] = None):
+    """Return the PNG/JPEG bytes for one extracted PDF image."""
+    from fastapi.responses import FileResponse
+    from image_store import get_image
+
+    session = get_session(session_id)
+    record = get_image(image_id)
+    if record is None or record.get("session_id") != session.session_id:
+        raise HTTPException(status_code=404, detail="Image not found.")
+
+    path = Path(record["file_path"])
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image file missing on disk.")
+    return FileResponse(path)
 
 
 @app.post("/api/source/preview")

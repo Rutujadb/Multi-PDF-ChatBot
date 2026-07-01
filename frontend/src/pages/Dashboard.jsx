@@ -446,7 +446,10 @@ export default function Dashboard() {
                       return (
                         <div key={file.name} className={`fade-up rounded-md p-3 card-hover ${COLOR_CLASSES[color]}`}>
                           <div className="text-sm font-bold truncate">{file.name}</div>
-                          <div className="text-[11px] font-mono opacity-70">{file.pages} pages · {file.chunks} chunks</div>
+                          <div className="text-[11px] font-mono opacity-70">
+                            {file.pages} pages · {file.chunks} chunks
+                            {file.images ? ` · ${file.images} images` : ''}
+                          </div>
                         </div>
                       )
                     })

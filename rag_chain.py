@@ -49,6 +49,7 @@ from config import (
     SUGGESTED_QUESTION_RETRIEVAL_QUERY,
 )
 from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
+from image_rag import enrich_documents_with_image_context
 from utils import format_llm_error
 from vector_store import get_indexed_filenames, retrieve_balanced_documents
 
@@ -474,6 +475,7 @@ def answer_from_documents(
     vector_store=None,
     llm_provider: Optional[str] = None,
     llm_model: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Answer a question using an explicit set of documents (no retrieval).
 
@@ -484,6 +486,10 @@ def answer_from_documents(
     Args:
         question: The user's question.
         documents: List of ``Document`` chunks to answer from.
+        vector_store: Optional vector store for citation resolution.
+        llm_provider: Optional LLM provider override.
+        llm_model: Optional LLM model override.
+        session_id: Optional session id for image caption context.
 
     Returns:
         Dict with ``answer`` (str) and ``source_documents`` (the given list).
@@ -496,10 +502,11 @@ def answer_from_documents(
         }
 
     labeled_docs = [ensure_page_label(doc) for doc in documents]
+    context_docs = enrich_documents_with_image_context(labeled_docs, session_id)
     context = "\n\n".join(
         f"[From {doc.metadata.get('source', 'Unknown')}, "
         f"page {doc.metadata.get('page_label', '?')}]\n{doc.page_content}"
-        for doc in labeled_docs
+        for doc in context_docs
     )
     prompt = _qa_template().format(context=context, question=question)
 
