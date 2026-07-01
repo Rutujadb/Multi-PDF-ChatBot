@@ -52,6 +52,7 @@ from utils import (
     extract_source_items,
     format_sources,
     is_multi_document_overview,
+    is_conversation_recall_question,
     parse_page_reference,
 )
 
@@ -59,18 +60,23 @@ SOURCE_COLORS = ("brand", "emerald2", "amber2")
 STREAMLIT_URL = STREAMLIT_APP_URL
 
 
-def _get_memory():
-    """Lazy-load conversation memory to keep API startup fast on Render."""
+def _get_memory(session_id: str):
+    """Lazy-load SQLite conversation memory for one session."""
     from rag_chain import get_memory
 
-    return get_memory()
+    return get_memory(session_id)
 
 
 def _rag_chain():
     """Lazy-load RAG chain helpers."""
-    from rag_chain import answer_from_documents, build_rag_chain, query_chain
+    from rag_chain import (
+        answer_from_chat_history,
+        answer_from_documents,
+        build_rag_chain,
+        query_chain,
+    )
 
-    return answer_from_documents, build_rag_chain, query_chain
+    return answer_from_chat_history, answer_from_documents, build_rag_chain, query_chain
 
 
 def _vector_store():
@@ -128,9 +134,9 @@ class AppSession:
     suggestions_index_key: tuple = field(default_factory=tuple)
 
     def ensure_memory(self) -> Any:
-        """Create conversation memory on first use."""
+        """Load or create SQLite-backed conversation memory for this session."""
         if self.memory is None:
-            self.memory = _get_memory()
+            self.memory = _get_memory(self.session_id)
         return self.memory
 
     def ensure_llm_selection(self) -> None:
@@ -152,7 +158,7 @@ class AppSession:
             _load,
             _retrieve,
         ) = _vector_store()
-        _, build_rag_chain, _ = _rag_chain()
+        _, build_rag_chain, _, _ = _rag_chain()
         self.ensure_llm_selection()
         self.indexed_files = (
             get_indexed_filenames(self.vector_store)
@@ -307,7 +313,7 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
         _load,
         retrieve_balanced_documents,
     ) = _vector_store()
-    answer_from_documents, _, query_chain = _rag_chain()
+    answer_from_chat_history, answer_from_documents, _, query_chain = _rag_chain()
 
     ensure_session_vector_store(session)
     session.ensure_llm_selection()
@@ -316,6 +322,14 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
         if session.vector_store
         else []
     )
+
+    if is_conversation_recall_question(prompt):
+        return answer_from_chat_history(
+            prompt,
+            session.ensure_memory(),
+            llm_provider=session.llm_provider,
+            llm_model=session.llm_model,
+        )
 
     ref_file, ref_page = parse_page_reference(prompt, indexed_files)
     if ref_file and ref_page:
@@ -372,8 +386,11 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
 
 def create_session(session_id: Optional[str] = None) -> AppSession:
     """Create or restore a session, loading its persisted vector store."""
+    from sqlite_memory import create_session as db_create_session, messages_to_api_format
+
     _, _, _, _, _, load_existing_vector_store, _ = _vector_store()
     sid = session_id or str(uuid.uuid4())
+    db_create_session(sid)
     persist_dir = session_chroma_dir(sid)
     vector_store = load_existing_vector_store(persist_dir)
     default_llm = get_default_llm_option()
@@ -382,6 +399,7 @@ def create_session(session_id: Optional[str] = None) -> AppSession:
         vector_store=vector_store,
         llm_provider=default_llm["provider"],
         llm_model=default_llm["model"],
+        messages=messages_to_api_format(sid),
     )
     if vector_store is not None:
         session.rebuild_chain()
@@ -423,10 +441,15 @@ def get_or_create_default_session() -> AppSession:
 
 def get_session(session_id: Optional[str] = None) -> AppSession:
     """Return an existing session, restoring it from disk when needed."""
+    from sqlite_memory import create_session as db_create_session, messages_to_api_format
+
     if session_id:
         if session_id not in _sessions:
             _sessions[session_id] = create_session(session_id)
-        return _sessions[session_id]
+        session = _sessions[session_id]
+        if not session.messages:
+            session.messages = messages_to_api_format(session.session_id)
+        return session
     return get_or_create_default_session()
 
 
@@ -647,8 +670,9 @@ def chat(payload: ChatRequest, session_id: Optional[str] = None):
 def clear_chat(session_id: Optional[str] = None):
     """Clear chat history while keeping indexed PDFs."""
     session = get_session(session_id)
+    session.ensure_memory().clear()
     session.messages = []
-    session.memory = _get_memory()
+    session.memory = None
     return {"message": "Chat cleared.", "messages": []}
 
 
@@ -665,6 +689,7 @@ def reset_session(session_id: Optional[str] = None):
         _retrieve,
     ) = _vector_store()
     from pdf_storage import delete_pdf
+    from sqlite_memory import delete_session as db_delete_session
 
     session = get_session(session_id)
     ensure_session_vector_store(session)
@@ -674,8 +699,12 @@ def reset_session(session_id: Optional[str] = None):
     session_dir = Path(session_chroma_dir(session.session_id))
     if session_dir.exists():
         shutil.rmtree(session_dir, ignore_errors=True)
+    db_delete_session(session.session_id)
+    from sqlite_memory import create_session as db_create_session
+
+    db_create_session(session.session_id)
     session.messages = []
-    session.memory = _get_memory()
+    session.memory = None
     session.chain = None
     session.vector_store = None
     session.indexed_files = []

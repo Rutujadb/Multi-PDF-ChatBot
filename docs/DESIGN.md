@@ -223,7 +223,7 @@ when context is irrelevant. This reduces hallucination outside uploaded content.
 
 ### Session chat history
 
-- `get_memory()` returns a fresh `InMemoryChatMessageHistory` per session (API: `AppSession.memory`; Streamlit: `st.session_state.memory`)
+- `get_memory(session_id)` returns `SqliteChatMessageHistory` per session (API: `AppSession.memory`; Streamlit: `st.session_state.memory`)
 - `build_rag_chain()` rebuilds the chain when the vector store or selected model changes; optional `llm_provider` / `llm_model` override the `.env` default
 - `query_chain()` passes `chat_history` into the chain and appends Human/AI messages after each response
 - Overview/page-targeted paths use `add_user_message()` / `add_ai_message()` for the same history object
@@ -251,7 +251,7 @@ when context is irrelevant. This reduces hallucination outside uploaded content.
 | Dual UI | React + Streamlit | React only | Streamlit deploys quickly on Community Cloud |
 | API layer | FastAPI for React only | Single monolith | Streamlit stays self-contained; shared Python core |
 | Per-session Chroma (React) | `chroma_db/api_sessions/{id}/` | Global store | Session isolation; restorable after API restart |
-| Per-session chat history | `InMemoryChatMessageHistory` | `ConversationBufferMemory` | Isolates each session's conversation turns |
+| Per-session chat history | `SqliteChatMessageHistory` + SQLite | `InMemoryChatMessageHistory` | Survives process restart; isolated per session |
 | Runtime model selection | `Models` dropdown in UI | Fixed `.env` provider only | Users can switch among configured providers without redeploying |
 | Balanced retrieval | Per-file + global merge | Plain top-k | Plain top-k failed on multi-PDF workloads |
 | Overview routing | Regex intent detection | Single retrieval path | Overview questions need guaranteed per-file context |
@@ -274,7 +274,7 @@ when context is irrelevant. This reduces hallucination outside uploaded content.
 |-------|------|---------|
 | `session_id` | UUID string | Client identifier; keys Chroma persist dir |
 | `messages` | List of dicts | Chat history for UI replay |
-| `memory` | `InMemoryChatMessageHistory` | Isolated conversational context for follow-ups |
+| `memory` | `SqliteChatMessageHistory` | Persistent conversational context in SQLite |
 | `chain` | ConversationalRetrievalChain | RAG pipeline handle |
 | `vector_store` | Chroma instance | Embedded chunks for this session |
 | `indexed_files` | List of filenames | Quick index summary |
@@ -287,7 +287,7 @@ Sessions are held in an in-memory `_sessions` dict. The React UI stores `session
 
 | Key | Purpose |
 |-----|---------|
-| `memory` | `InMemoryChatMessageHistory` for follow-up context |
+| `memory` | `SqliteChatMessageHistory` for follow-up context |
 | `selected_llm_provider` / `selected_llm_model` | Active model from the sidebar **Models** dropdown |
 | `chain`, `vector_store`, `indexed_files` | RAG pipeline state (same concepts as API session) |
 
@@ -330,7 +330,9 @@ Persistent conversation history will live in a local SQLite database (`sqlite_me
 - PyTest coverage in `tests/test_sqlite_memory.py`
 - Restart test: messages reload after API process exit
 
-**Current state (Phase 0):** `CHAT_DB_PATH` configured in `config.py`; database module not wired yet — memory remains in-process only.
+`streamlit_session_id` is stored under `data/` for local Streamlit refresh persistence.
+
+**Current state:** Implemented in `sqlite_memory.py` with `SqliteChatMessageHistory` wired into `rag_chain.get_memory(session_id)`, `api.py`, and `app.py`.
 
 ### What persists vs ephemeral
 
@@ -338,8 +340,8 @@ Persistent conversation history will live in a local SQLite database (`sqlite_me
 |------|-----------------|-----------|
 | Chroma vectors (disk) | API restart (same session_id) | Reset session; Render ephemeral disk wipe |
 | Raw PDFs on disk | Same as above | Reset session; host disk cleared |
-| Chat messages (LangChain) | In-memory today; SQLite after Phase 1 | Clear chat; reset session; until SQLite wired: API restart |
-| Chat UI replay (`messages`) | Browser tab / API process lifetime | Refresh; API restart; clear chat |
+| Chat messages (LangChain) | SQLite (`CHAT_DB_PATH`) | Clear chat; reset session |
+| Chat UI replay (`messages`) | Same SQLite rows on reload (sources not persisted) | Clear chat; reset session |
 | Embedding model cache | Host filesystem | New deploy without cache |
 
 ---
@@ -505,7 +507,7 @@ See [DEPLOY.md](../DEPLOY.md) for production setup.
 - **Local embeddings + remote LLM is practical.** Embeddings are free and private; only generation needs an API key.
 - **Duplicate uploads need explicit rejection.** The app blocks already-indexed files and duplicate filenames in the same upload batch, returning the existing document reference.
 - **Line-aware highlighting improves trust.** Narrowing highlights to the cited line/fragment avoids broad page-wide marks that look imprecise.
-- **Session-scoped chat history matters.** `InMemoryChatMessageHistory` keeps each browser/API session isolated without sharing turns across sessions.
+- **Session-scoped chat history matters.** `SqliteChatMessageHistory` keeps each session isolated while surviving API/Streamlit restarts.
 - **Lazy imports are required on constrained hosts.** Eager loading of torch + LangChain caused Render OOM/timeouts.
 
 ---
