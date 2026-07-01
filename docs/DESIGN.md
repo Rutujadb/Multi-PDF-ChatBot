@@ -301,7 +301,36 @@ chroma_db/
 
 uploaded_pdfs/
 └── {filename}.pdf            # Raw files for source preview
+
+data/
+└── chat_memory.db            # SQLite chat memory (Phase 1+; path via CHAT_DB_PATH)
 ```
+
+### SQLite chat memory (in progress)
+
+Persistent conversation history will live in a local SQLite database (`sqlite_memory.py`, default `./data/chat_memory.db`). LangChain will read/write via a `SqliteChatMessageHistory` adapter replacing `InMemoryChatMessageHistory`.
+
+**Schema (planned)**
+
+| Table | Column | Type | Purpose |
+|-------|--------|------|---------|
+| `chat_sessions` | `session_id` | TEXT PK | UUID matching API / Streamlit session |
+| | `summary` | TEXT NULL | Rolling conversation summary (optional compression) |
+| | `created_at` | TEXT | ISO8601 UTC |
+| | `updated_at` | TEXT | ISO8601 UTC |
+| `chat_messages` | `id` | INTEGER PK | Stable insert order |
+| | `session_id` | TEXT FK | Links to `chat_sessions` |
+| | `timestamp` | TEXT | ISO8601 UTC |
+| | `role` | TEXT | `user`, `assistant`, or `system` |
+| | `content` | TEXT | Message body |
+
+**CRUD operations (Phase 1 deliverable)**
+
+- Create session, append message, retrieve messages, update summary, clear messages, delete session
+- PyTest coverage in `tests/test_sqlite_memory.py`
+- Restart test: messages reload after API process exit
+
+**Current state (Phase 0):** `CHAT_DB_PATH` configured in `config.py`; database module not wired yet — memory remains in-process only.
 
 ### What persists vs ephemeral
 
@@ -309,7 +338,8 @@ uploaded_pdfs/
 |------|-----------------|-----------|
 | Chroma vectors (disk) | API restart (same session_id) | Reset session; Render ephemeral disk wipe |
 | Raw PDFs on disk | Same as above | Reset session; host disk cleared |
-| Chat messages | Browser tab / API process lifetime | Refresh; API restart; clear chat |
+| Chat messages (LangChain) | In-memory today; SQLite after Phase 1 | Clear chat; reset session; until SQLite wired: API restart |
+| Chat UI replay (`messages`) | Browser tab / API process lifetime | Refresh; API restart; clear chat |
 | Embedding model cache | Host filesystem | New deploy without cache |
 
 ---
@@ -433,6 +463,7 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 | `LLM_TOP_K` | No | Decoding `top_k` (default `40`) |
 | `LLM_FREQUENCY_PENALTY` | No | OpenRouter frequency penalty |
 | `VECTOR_STORE` | No | `chroma` (default) or `pinecone` |
+| `CHAT_DB_PATH` | No | SQLite file for persistent chat memory (default `./data/chat_memory.db`) |
 | `STREAMLIT_APP_URL` | No | Link shown in React dashboard |
 | `FRONTEND_ALLOWED_ORIGINS` | Production | Comma-separated CORS origins for Vercel/Pages |
 
