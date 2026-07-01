@@ -6,6 +6,9 @@ modules. All stateful data lives in ``st.session_state``.
 SRS references: FR-UI-01 → FR-UI-07, FR-PDF-01, FR-MEM-01, FR-MEM-03, FR-MEM-04.
 """
 import os
+import uuid
+from pathlib import Path
+
 import streamlit as st
 
 
@@ -48,6 +51,7 @@ from rag_chain import (
     build_rag_chain,
     query_chain,
     answer_from_documents,
+    answer_from_chat_history,
     generate_suggested_questions,
 )
 from utils import (
@@ -56,11 +60,35 @@ from utils import (
     extract_source_items,
     build_chat_export,
     is_multi_document_overview,
+    is_conversation_recall_question,
     parse_page_reference,
 )
 
+from sqlite_memory import delete_session as db_delete_session, messages_to_streamlit_format
+
 USER_AVATAR = "🧑"
 ASSISTANT_AVATAR = "🤖"
+STREAMLIT_SESSION_ID_FILE = Path("./data/streamlit_session_id")
+
+
+def _load_or_create_streamlit_session_id() -> str:
+    """Return a stable Streamlit session id persisted across browser refresh."""
+    STREAMLIT_SESSION_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if STREAMLIT_SESSION_ID_FILE.is_file():
+        existing = STREAMLIT_SESSION_ID_FILE.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    session_id = f"streamlit-{uuid.uuid4()}"
+    STREAMLIT_SESSION_ID_FILE.write_text(session_id, encoding="utf-8")
+    return session_id
+
+
+def _rotate_streamlit_session_id() -> str:
+    """Create a new Streamlit session id and persist it to disk."""
+    session_id = f"streamlit-{uuid.uuid4()}"
+    STREAMLIT_SESSION_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STREAMLIT_SESSION_ID_FILE.write_text(session_id, encoding="utf-8")
+    return session_id
 
 st.set_page_config(
     page_title="Multi-PDF ChatBot",
@@ -130,8 +158,14 @@ def initialise_session_state():
     """
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = _load_or_create_streamlit_session_id()
     if "memory" not in st.session_state:
-        st.session_state.memory = get_memory()
+        st.session_state.memory = get_memory(st.session_state.session_id)
+    if not st.session_state.messages:
+        st.session_state.messages = messages_to_streamlit_format(
+            st.session_state.session_id
+        )
     if "chain" not in st.session_state:
         st.session_state.chain = None
     if "indexed_files" not in st.session_state:
@@ -315,17 +349,19 @@ def clear_chat():
     dismiss_pdf_viewer()
     st.session_state.pdf_viewer_stage = "cleanup"
     st.session_state.messages = []
-    st.session_state.memory = get_memory()
+    st.session_state.memory.clear()
 
 
 def reset_session():
     """Clear chat history and the indexed knowledge base (FR-MEM-04)."""
+    db_delete_session(st.session_state.session_id)
     clear_vector_store(st.session_state.get("vector_store"))
     clear_all_pdfs()
     dismiss_pdf_viewer()
     st.session_state.pdf_viewer_stage = "cleanup"
+    st.session_state.session_id = _rotate_streamlit_session_id()
     st.session_state.messages = []
-    st.session_state.memory = get_memory()
+    st.session_state.memory = get_memory(st.session_state.session_id)
     st.session_state.chain = None
     st.session_state.vector_store = None
     st.session_state.indexed_files = []
@@ -492,6 +528,15 @@ def answer_prompt(prompt: str) -> dict:
         Dict with ``answer`` and ``source_documents``.
     """
     indexed_files = st.session_state.indexed_files
+
+    if is_conversation_recall_question(prompt):
+        return answer_from_chat_history(
+            prompt,
+            st.session_state.memory,
+            llm_provider=st.session_state.selected_llm_provider,
+            llm_model=st.session_state.selected_llm_model,
+        )
+
     ref_file, ref_page = parse_page_reference(prompt, indexed_files)
     if ref_file and ref_page:
         page_docs = get_page_documents(

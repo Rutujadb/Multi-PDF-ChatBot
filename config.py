@@ -34,6 +34,9 @@ CHROMA_COLLECTION_NAME = "multi_pdf_store"
 # --- Uploaded PDF storage (for source preview) ---
 UPLOADED_PDF_DIR = Path("./uploaded_pdfs")
 
+# --- SQLite chat memory (persistent conversation history) ---
+CHAT_DB_PATH = Path(os.getenv("CHAT_DB_PATH", "./data/chat_memory.db"))
+
 # --- Embedding model ---
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 

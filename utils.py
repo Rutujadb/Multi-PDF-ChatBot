@@ -30,6 +30,35 @@ _MULTI_DOC_OVERVIEW_PATTERNS = (
     re.compile(r"\bwhat\s+(?:is|are)\s+(?:the\s+)?(?:pdf|pdfs|document|documents)\b", re.I),
 )
 
+_CONVERSATION_RECALL_PATTERNS = (
+    re.compile(r"\bprevious question\b", re.I),
+    re.compile(r"\blast question\b", re.I),
+    re.compile(r"\bwhat did i ask\b", re.I),
+    re.compile(r"\bwhat was my question\b", re.I),
+    re.compile(r"\bwhat (?:have|did) we (?:talk|discuss)(?: about)?\b", re.I),
+    re.compile(r"\bconversation so far\b", re.I),
+    re.compile(r"\brecap (?:our|the) (?:chat|conversation)\b", re.I),
+    re.compile(r"\bwhat did you (?:just )?answer\b", re.I),
+)
+
+
+def is_conversation_recall_question(question: str) -> bool:
+    """Return True when the user is asking about the chat session itself.
+
+    These questions should be answered from conversation memory, not from
+    retrieved PDF chunks.
+
+    Args:
+        question: The user's question text.
+
+    Returns:
+        ``True`` if the question is about prior turns in this session.
+    """
+    text = (question or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _CONVERSATION_RECALL_PATTERNS)
+
 
 def is_multi_document_overview(question: str, indexed_file_count: int) -> bool:
     """Return True when the user is asking for a summary across all PDFs.

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import json
 import re
 
-from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import PromptTemplate
@@ -138,14 +138,20 @@ def get_llm(
     )
 
 
-def get_memory() -> InMemoryChatMessageHistory:
-    """Create a fresh in-memory chat history for one isolated session."""
-    return InMemoryChatMessageHistory()
+def get_memory(session_id: str) -> BaseChatMessageHistory:
+    """Return SQLite-backed chat history for one session."""
+    from sqlite_memory import SqliteChatMessageHistory, create_session
+
+    sid = (session_id or "").strip()
+    if not sid:
+        raise ValueError("session_id is required for persistent chat memory.")
+    create_session(sid)
+    return SqliteChatMessageHistory(sid)
 
 
 def build_rag_chain(
     retriever: BaseRetriever,
-    chat_history: Optional[InMemoryChatMessageHistory] = None,
+    chat_history: Optional[BaseChatMessageHistory] = None,
     llm_provider: Optional[str] = None,
     llm_model: Optional[str] = None,
 ) -> ConversationalRetrievalChain:
@@ -196,7 +202,7 @@ def query_chain(
     chain: ConversationalRetrievalChain,
     question: str,
     vector_store=None,
-    chat_history: Optional[InMemoryChatMessageHistory] = None,
+    chat_history: Optional[BaseChatMessageHistory] = None,
 ) -> Dict[str, Any]:
     """Invoke the RAG chain with a user question.
 
@@ -248,6 +254,75 @@ def query_chain(
             "answer": format_llm_error(e),
             "source_documents": [],
         }
+
+
+def answer_from_chat_history(
+    question: str,
+    chat_history: Optional[BaseChatMessageHistory] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Answer questions about the current chat session using stored turns.
+
+    Meta questions such as "what was my previous question?" are not answerable
+    from PDF retrieval context, so this path reads SQLite-backed chat history
+    instead of running document RAG.
+
+    Args:
+        question: The user's question.
+        chat_history: Session chat history with prior turns.
+        llm_provider: Optional LLM provider override.
+        llm_model: Optional LLM model override.
+
+    Returns:
+        Dict with ``answer`` (str) and empty ``source_documents``.
+    """
+    messages = list(chat_history.messages) if chat_history is not None else []
+    human_turns = [
+        str(message.content)
+        for message in messages
+        if isinstance(message, HumanMessage)
+    ]
+
+    if not human_turns:
+        answer = "We have not exchanged any messages yet in this session."
+    else:
+        lowered = (question or "").lower()
+        previous_markers = (
+            "previous question",
+            "last question",
+            "what did i ask",
+            "what was my question",
+        )
+        if any(marker in lowered for marker in previous_markers):
+            answer = f'Your previous question was: "{human_turns[-1]}"'
+        else:
+            history_lines = []
+            for message in messages:
+                role = "You" if isinstance(message, HumanMessage) else "Assistant"
+                history_lines.append(f"{role}: {message.content}")
+            history_text = "\n".join(history_lines)
+            prompt = (
+                "You are helping the user understand their current chat session. "
+                "Answer using only the conversation history below. "
+                "Do not invent messages that are not shown.\n\n"
+                f"Conversation history:\n{history_text}\n\n"
+                f"Question: {question}\nAnswer:"
+            )
+            try:
+                response = get_llm(
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                ).invoke(prompt)
+                answer = getattr(response, "content", str(response))
+            except Exception as exc:
+                answer = format_llm_error(exc)
+
+    if chat_history is not None:
+        chat_history.add_messages(
+            [HumanMessage(content=question), AIMessage(content=answer)]
+        )
+    return {"answer": answer, "source_documents": []}
 
 
 def _parse_suggested_questions(raw_text: str, count: int) -> List[str]:
