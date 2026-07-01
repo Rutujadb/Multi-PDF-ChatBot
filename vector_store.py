@@ -65,6 +65,14 @@ def _resolve_persist_dir(persist_dir: Optional[str] = None) -> str:
     return persist_dir or CHROMA_PERSIST_DIR
 
 
+def _indexed_chunk_count(vector_store: "Chroma") -> int:
+    """Return the number of chunks stored in a Chroma collection."""
+    try:
+        return int(vector_store._collection.count())
+    except Exception:
+        return 0
+
+
 def create_or_update_vector_store(
     chunks: List[Document],
     persist_dir: Optional[str] = None,
@@ -87,6 +95,8 @@ def create_or_update_vector_store(
     if existing_store is not None:
         if chunks:
             existing_store.add_documents(chunks)
+            if _indexed_chunk_count(existing_store) == 0:
+                return create_or_update_vector_store(chunks, persist_dir=persist_dir)
         return existing_store
 
     target_dir = _resolve_persist_dir(persist_dir)
@@ -101,6 +111,13 @@ def create_or_update_vector_store(
         )
         if chunks:
             vector_store.add_documents(chunks)
+            if _indexed_chunk_count(vector_store) == 0:
+                vector_store = Chroma.from_documents(
+                    documents=chunks,
+                    embedding=embeddings,
+                    collection_name=CHROMA_COLLECTION_NAME,
+                    persist_directory=target_dir,
+                )
     else:
         os.makedirs(target_dir, exist_ok=True)
         vector_store = Chroma.from_documents(
@@ -256,17 +273,32 @@ class _BalancedRetriever(BaseRetriever):
         return retrieve_balanced_documents(self._vector_store, query)
 
 
-def get_retriever(vector_store: "Chroma") -> BaseRetriever:
+def get_retriever(
+    vector_store: "Chroma",
+    session_id: Optional[str] = None,
+) -> BaseRetriever:
     """Create a balanced similarity retriever from the vector store.
+
+    When ``session_id`` is provided and image extraction is enabled, retrieved
+    chunks are enriched with Gemma-generated image captions for their page.
 
     Args:
         vector_store: A ``Chroma`` vector store instance.
+        session_id: Optional session id for image caption enrichment.
 
     Returns:
         A retriever that returns globally relevant chunks while ensuring each
         indexed PDF contributes at least some context.
     """
-    return _BalancedRetriever(vector_store)
+    from config import IMAGE_EXTRACTION_ENABLED
+
+    base = _BalancedRetriever(vector_store)
+    sid = (session_id or "").strip()
+    if IMAGE_EXTRACTION_ENABLED and sid:
+        from image_rag import ImageEnrichingRetriever
+
+        return ImageEnrichingRetriever(base, sid)
+    return base
 
 
 def clear_vector_store(vector_store: "Chroma") -> bool:

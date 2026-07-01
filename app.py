@@ -34,7 +34,13 @@ from config import (
     get_default_llm_option,
 )
 from pdf_processor import load_pdfs, split_documents, filter_new_files
-from pdf_storage import clear_all_pdfs, delete_pdf, save_uploaded_pdf
+from pdf_storage import clear_all_pdfs, delete_pdf, get_pdf_path, save_uploaded_pdf
+from pdf_image_pipeline import (
+    build_caption_chunks_for_sources,
+    enrich_indexed_files_with_image_counts,
+    process_pdf_images,
+)
+from image_store import count_images_by_source
 from source_viewer import dismiss_pdf_viewer, render_pdf_viewer_modal, render_source_citations
 from vector_store import (
     create_or_update_vector_store,
@@ -201,7 +207,9 @@ def initialise_session_state():
         if vector_store is not None:
             st.session_state.indexed_files = get_indexed_filenames(vector_store)
             if st.session_state.indexed_files:
-                retriever = get_retriever(vector_store)
+                retriever = get_retriever(
+                vector_store, st.session_state.session_id
+            )
                 st.session_state.chain = build_rag_chain(
                     retriever,
                     st.session_state.memory,
@@ -244,7 +252,7 @@ def rebuild_chain():
         get_indexed_filenames(vector_store) if vector_store else []
     )
     if st.session_state.indexed_files:
-        retriever = get_retriever(vector_store)
+        retriever = get_retriever(vector_store, st.session_state.session_id)
         st.session_state.chain = build_rag_chain(
             retriever,
             st.session_state.memory,
@@ -317,26 +325,78 @@ def process_uploaded_pdfs(uploaded_files):
             uploaded.seek(0)
             save_uploaded_pdf(uploaded.name, uploaded.read())
             uploaded.seek(0)
+            pdf_path = get_pdf_path(uploaded.name)
+            if pdf_path is not None:
+                image_stats = process_pdf_images(
+                    st.session_state.session_id,
+                    uploaded.name,
+                    pdf_path,
+                )
+                if image_stats.get("extracted", 0) > 0:
+                    st.caption(
+                        f"Extracted {image_stats['extracted']} image(s) from "
+                        f"{uploaded.name}."
+                    )
 
         documents, failed = load_pdfs(new_files)
         if failed:
             st.warning(f"Could not read (skipped): {', '.join(failed)}")
         if not documents:
-            st.error("No readable text found in the uploaded PDF(s).")
+            caption_chunks = build_caption_chunks_for_sources(
+                st.session_state.session_id,
+                [upload.name for upload in new_files],
+            )
+            if not caption_chunks:
+                st.error("No readable text found in the uploaded PDF(s).")
+                return
+            chunks = caption_chunks
+            st.info(
+                "No selectable text found. Indexed from extracted image captions instead."
+            )
+        else:
+            chunks = split_documents(documents)
+            chunks = [chunk for chunk in chunks if (chunk.page_content or "").strip()]
+            if not chunks:
+                chunks = build_caption_chunks_for_sources(
+                    st.session_state.session_id,
+                    [upload.name for upload in new_files],
+                )
+                if chunks:
+                    st.info(
+                        "No text chunks found. Indexed from extracted image captions instead."
+                    )
+
+        if not chunks:
+            st.error(
+                "Could not index this PDF. Add selectable text or ensure image "
+                "captioning is enabled."
+            )
             return
 
-        chunks = split_documents(documents)
-        vector_store = create_or_update_vector_store(chunks)
+        vector_store = create_or_update_vector_store(
+            chunks,
+            existing_store=st.session_state.get("vector_store"),
+        )
         st.session_state.vector_store = vector_store
         rebuild_chain()
 
+        if not st.session_state.indexed_files or st.session_state.chain is None:
+            st.error(
+                "Indexing did not complete. Try **Reset All**, then upload again."
+            )
+            return
+
     st.success(f"✅ {len(new_files)} PDF(s) processed and indexed!")
+    st.rerun()
 
 
 def remove_file(filename: str):
     """Remove a single indexed PDF and refresh the chain (FR-MEM, doc mgmt)."""
+    from image_store import delete_images_for_source
+
     delete_file(st.session_state.vector_store, filename)
     delete_pdf(filename)
+    delete_images_for_source(st.session_state.session_id, filename)
     viewer_item = st.session_state.get("pdf_viewer_item") or {}
     if viewer_item.get("file") == filename:
         dismiss_pdf_viewer()
@@ -354,7 +414,10 @@ def clear_chat():
 
 def reset_session():
     """Clear chat history and the indexed knowledge base (FR-MEM-04)."""
+    from image_store import delete_images_for_session
+
     db_delete_session(st.session_state.session_id)
+    delete_images_for_session(st.session_state.session_id)
     clear_vector_store(st.session_state.get("vector_store"))
     clear_all_pdfs()
     dismiss_pdf_viewer()
@@ -413,8 +476,12 @@ def render_sidebar():
             count = len(st.session_state.indexed_files)
             st.markdown(f"**Indexed Documents ({count}):**")
             for filename in st.session_state.indexed_files:
+                image_counts = count_images_by_source(st.session_state.session_id)
+                image_note = ""
+                if image_counts.get(filename):
+                    image_note = f" ({image_counts[filename]} images)"
                 col_name, col_del = st.columns([5, 1])
-                col_name.markdown(f"✅ {filename}")
+                col_name.markdown(f"✅ {filename}{image_note}")
                 if col_del.button("🗑", key=f"del_{filename}",
                                   help=f"Remove {filename}"):
                     remove_file(filename)
@@ -549,6 +616,7 @@ def answer_prompt(prompt: str) -> dict:
                 vector_store=st.session_state.vector_store,
                 llm_provider=st.session_state.selected_llm_provider,
                 llm_model=st.session_state.selected_llm_model,
+                session_id=st.session_state.session_id,
             )
             try:
                 st.session_state.memory.add_user_message(prompt)
@@ -571,6 +639,7 @@ def answer_prompt(prompt: str) -> dict:
             vector_store=st.session_state.vector_store,
             llm_provider=st.session_state.selected_llm_provider,
             llm_model=st.session_state.selected_llm_model,
+            session_id=st.session_state.session_id,
         )
         try:
             st.session_state.memory.add_user_message(prompt)
@@ -589,6 +658,9 @@ def answer_prompt(prompt: str) -> dict:
 
 def render_chat():
     """Render the main chat area: history, empty state, input, and footer."""
+    if st.session_state.chain is None and st.session_state.vector_store is not None:
+        rebuild_chain()
+
     if not st.session_state.indexed_files:
         st.info(
             "👈 Upload PDF files in the sidebar and click "

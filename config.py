@@ -37,6 +37,26 @@ UPLOADED_PDF_DIR = Path("./uploaded_pdfs")
 # --- SQLite chat memory (persistent conversation history) ---
 CHAT_DB_PATH = Path(os.getenv("CHAT_DB_PATH", "./data/chat_memory.db"))
 
+# --- PDF image extraction (manifest + disk; not stored in Chroma) ---
+EXTRACTED_IMAGES_DIR = Path(os.getenv("EXTRACTED_IMAGES_DIR", "./data/extracted_images"))
+IMAGE_DB_PATH = Path(os.getenv("IMAGE_DB_PATH", "./data/image_manifest.db"))
+IMAGE_EXTRACTION_ENABLED = os.getenv("IMAGE_EXTRACTION_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+IMAGE_CAPTION_ENABLED = os.getenv("IMAGE_CAPTION_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+IMAGE_MIN_WIDTH = int(os.getenv("IMAGE_MIN_WIDTH", "50"))
+IMAGE_MIN_HEIGHT = int(os.getenv("IMAGE_MIN_HEIGHT", "50"))
+IMAGE_CAPTION_MODEL = os.getenv(
+    "IMAGE_CAPTION_MODEL",
+    "google/gemma-3-12b-it",
+)
+
 # --- Embedding model ---
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
@@ -85,6 +105,16 @@ if LLM_PROVIDER == "groq" and not GROQ_API_KEY and OPENROUTER_API_KEY:
 
 if LLM_PROVIDER == "nvidia" and not NVIDIA_API_KEY and OPENROUTER_API_KEY:
     LLM_PROVIDER = "openrouter"
+
+_image_caption_provider = os.getenv("IMAGE_CAPTION_PROVIDER", "").strip().lower()
+if _image_caption_provider in ("openrouter", "groq", "nvidia", "gemini"):
+    IMAGE_CAPTION_PROVIDER = _image_caption_provider
+elif OPENROUTER_API_KEY:
+    IMAGE_CAPTION_PROVIDER = "openrouter"
+elif GOOGLE_API_KEY:
+    IMAGE_CAPTION_PROVIDER = "gemini"
+else:
+    IMAGE_CAPTION_PROVIDER = LLM_PROVIDER
 
 
 def get_active_llm_name() -> str:

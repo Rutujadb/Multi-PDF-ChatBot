@@ -1,0 +1,106 @@
+"""Generate text captions for extracted PDF images using a Gemma vision model."""
+
+from __future__ import annotations
+
+import base64
+import mimetypes
+from pathlib import Path
+from typing import Optional
+
+from langchain_core.messages import HumanMessage
+
+from config import (
+    GOOGLE_API_KEY,
+    IMAGE_CAPTION_MODEL,
+    IMAGE_CAPTION_PROVIDER,
+    IMAGE_CAPTION_ENABLED,
+    OPENROUTER_API_KEY,
+)
+from utils import format_llm_error
+
+
+_CAPTION_PROMPT = """Describe this image extracted from a PDF page for a document Q&A system.
+Include visible text, chart titles, axis labels, table headers, diagram labels, and the main subject.
+Be factual and concise. Do not invent content that is not visible in the image."""
+
+
+def _image_mime_type(path: Path) -> str:
+    """Return a MIME type for an on-disk image file."""
+    guessed, _ = mimetypes.guess_type(str(path))
+    return guessed or "image/png"
+
+
+def _image_data_url(path: Path) -> str:
+    """Encode an image file as a data URL for multimodal chat APIs."""
+    mime = _image_mime_type(path)
+    encoded = base64.standard_b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def get_caption_llm(
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    """Return the configured vision-capable LLM for image captioning."""
+    from rag_chain import get_llm
+
+    chosen_provider = (provider or IMAGE_CAPTION_PROVIDER).strip().lower()
+    chosen_model = model or IMAGE_CAPTION_MODEL
+
+    if chosen_provider == "openrouter" and not OPENROUTER_API_KEY:
+        chosen_provider = "gemini"
+    if chosen_provider == "gemini" and not GOOGLE_API_KEY and OPENROUTER_API_KEY:
+        chosen_provider = "openrouter"
+
+    return get_llm(llm_provider=chosen_provider, llm_model=chosen_model)
+
+
+def caption_image(
+    image_path: Path,
+    source: str = "",
+    page_label: str = "",
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
+    """Describe one extracted PDF image with a Gemma-family vision model.
+
+    Args:
+        image_path: Path to the saved image file.
+        source: Optional PDF filename for prompt context.
+        page_label: Optional 1-based page label for prompt context.
+        provider: Optional provider override.
+        model: Optional model override.
+
+    Returns:
+        A plain-text caption, or an empty string when captioning is disabled or fails.
+    """
+    if not IMAGE_CAPTION_ENABLED:
+        return ""
+
+    path = Path(image_path)
+    if not path.is_file():
+        return ""
+
+    context_bits = []
+    if source:
+        context_bits.append(f"Source PDF: {source}")
+    if page_label:
+        context_bits.append(f"Page: {page_label}")
+    context_line = "\n".join(context_bits)
+    prompt = _CAPTION_PROMPT
+    if context_line:
+        prompt = f"{context_line}\n\n{_CAPTION_PROMPT}"
+
+    message = HumanMessage(
+        content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": _image_data_url(path)}},
+        ]
+    )
+
+    try:
+        response = get_caption_llm(provider=provider, model=model).invoke([message])
+        text = getattr(response, "content", str(response)).strip()
+        return text
+    except Exception as exc:
+        return format_llm_error(exc)
