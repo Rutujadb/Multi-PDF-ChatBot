@@ -3,7 +3,7 @@
 Step-by-step guide for using the app: upload PDFs, ask questions, read sources, and troubleshoot common issues.
 
 **Audience:** End users (no coding required).  
-**Technical details:** See [DESIGN.md](./DESIGN.md).
+**Technical details:** See [DESIGN.md](./DESIGN.md) and [MULTIMODAL_DESIGN.md](./MULTIMODAL_DESIGN.md).
 
 ---
 
@@ -13,12 +13,13 @@ Multi-PDF ChatBot lets you:
 
 - Upload **one or more PDF files** into a shared knowledge base
 - Ask **natural-language questions** answered from your PDF content only
+- **Extract embedded images** from PDFs and describe them with a Gemma vision model (when configured)
 - See **which PDF and page** each answer came from (source citations)
 - **Click a source** to open a highlighted PDF preview (React UI) — highlights target the cited line when available
 - **Switch AI models** from a **Models** dropdown (OpenRouter, Groq, Nvidia, Gemini — whichever keys are configured)
-- Continue a **conversation** — follow-up questions remember prior turns
+- Continue a **conversation** — follow-up questions remember prior turns (stored in SQLite per session)
 
-> **Important:** The app works with **text-based PDFs** (you can select/copy text in the file). Scanned or image-only PDFs are **not supported** yet.
+> **Important:** The app works best with **text-based PDFs** (you can select/copy text). **Image-heavy PDFs** can still be indexed using **Gemma image captions** as a fallback. Full OCR for scanned pages is not supported yet.
 
 ---
 
@@ -40,9 +41,9 @@ Health check: https://multi-pdf-chatbot-y6nu.onrender.com/api/health
 
 ### What you need
 
-- PDF files with **selectable text** (not scanned images)
+- PDF files with **selectable text** and/or **embedded images** (charts, diagrams)
 - A modern web browser (Chrome, Firefox, Edge, Safari)
-- Internet connection (the AI model runs remotely)
+- Internet connection (the AI model runs remotely; image captioning uses a separate vision model)
 
 ### First-time delay (React UI)
 
@@ -72,13 +73,14 @@ Only models whose API keys are configured on the server appear in the list.
 1. In the **sidebar**, drag and drop PDF files or use the file picker
 2. You can queue **multiple files** before processing
 3. Click **Process PDFs**
-4. Wait for indexing to finish — the sidebar shows each file with page and chunk counts
+4. Wait for indexing to finish — the sidebar shows each file with page, chunk, and **image** counts (when images were extracted)
 
 ![Dashboard upload](screenshots/react-upload.png)
 
 **Tips**
 
 - **Duplicate filenames are rejected.** If you upload `report.pdf` twice (in one batch or after it is already indexed), you see: *you cannot add same file twice*, with a reference to the existing document.
+- **Image-heavy PDFs:** if there is little selectable text, the app may show *Indexed from extracted image captions instead* (Streamlit) and still enable chat.
 - To index updated content under a new name, **rename the file** (e.g. `report-v2.pdf`) before uploading.
 - Invalid or empty files are skipped with a message.
 
@@ -99,6 +101,7 @@ Only models whose API keys are configured on the server appear in the list.
 | "What is each PDF about?" | Overview across all files |
 | "What are the key points in the cover letter?" | Specific document |
 | "What is on page 3 of report.pdf?" | Page-targeted lookup |
+| "What does the chart on page 3 show?" | PDFs with embedded figures |
 | "What topics are covered?" | Broad content discovery |
 
 Follow-up questions work naturally: "Can you elaborate on the second point?" remembers the conversation.
@@ -139,7 +142,8 @@ Go to https://multi-pdf-chatbot-rb.streamlit.app/
 
 1. Use the **sidebar** file uploader to select one or more PDFs
 2. Click **Process PDFs**
-3. Wait for the success message and indexed file list
+3. Wait for the success message, **Indexed Documents** list, and optional *Extracted N image(s)* caption
+4. If the PDF has images but no text, you may see: *Indexed from extracted image captions instead*
 
 ![Streamlit sidebar upload](screenshots/streamlit-upload.png)
 
@@ -168,11 +172,14 @@ Duplicate filenames in the same upload or already in the index show an error: *y
 |---------|----------|-----------|
 | Landing page | Yes | No |
 | Models dropdown | Yes (sidebar) | Yes (sidebar) |
+| Image extraction + counts | Yes | Yes |
+| Caption fallback for image PDFs | Yes | Yes |
 | Source preview | Side panel + download | Inline PNG preview |
 | Line-aware highlights | Yes | Yes |
 | Multi-PDF balanced answers | Yes | Yes |
 | Duplicate upload handling | Reject with error | Reject with error |
-| Session persistence after refresh | No (new session) | No |
+| Chat memory (SQLite) | Per `session_id` | Per `session_id` |
+| Session persistence after refresh | Partial (messages reload if same session) | Partial (same session file) |
 | Cold start delay | Yes (API on Render) | Minimal |
 | Recommended for demos | Yes | Alternate / backup |
 
@@ -209,10 +216,10 @@ For questions like "Summarise each document" or "What is each PDF about?", uploa
 1. **Upload everything before broad questions** — especially for summaries across multiple files.
 2. **Use specific filenames** when you have many PDFs: "What does `policy-2024.pdf` say about refunds?"
 3. **One clear topic per question** often works better than very long compound questions.
-4. **Wait for indexing to finish** before chatting — the Process button must complete successfully.
+4. **Wait for indexing to finish** — confirm **Indexed Documents** appears and chat input is enabled before asking questions.
 5. **Avoid duplicate filenames** — the app rejects the same name twice; rename files if you need a new version indexed.
 6. **Try another model** from the Models dropdown if answers are slow or low quality (depends on which providers are configured).
-7. **Be patient on first load** — the React API may need time to wake from sleep.
+7. **Be patient on first load** — the React API may need time to wake from sleep; image captioning adds extra time on upload.
 
 ---
 
@@ -221,15 +228,17 @@ For questions like "Summarise each document" or "What is each PDF about?", uploa
 | Problem | Likely cause | What to do |
 |---------|--------------|------------|
 | Upload or chat hangs (React) | API cold start on Render | Wait 1–3 minutes; check [health endpoint](https://multi-pdf-chatbot-y6nu.onrender.com/api/health); retry |
-| "No readable text found" | Scanned/image-only PDF | Use a text-based PDF or OCR tool first |
+| Chat disabled after "success" | Indexing produced 0 chunks (old bug) | **Reset All**, restart app, re-upload; look for **Indexed Documents** list |
+| "No readable text found" | Scanned PDF with no embedded images | Use OCR externally, or a PDF with embedded figures |
+| Image extracted but weak answers | Captions failed or rate-limited | Check `.env` vision model (`IMAGE_CAPTION_MODEL`); retry upload |
 | Answer mentions only one PDF | Asked before all files indexed | Process all PDFs, then ask "What is each PDF about?" |
 | Source preview empty or error | Server restarted; PDFs cleared from disk | Click **Reset session**, re-upload all PDFs |
 | "I don't have enough information…" | Topic not in documents | Rephrase; confirm the right PDF is indexed |
 | Duplicate file upload rejected | Same filename in batch or already indexed | Use a new filename, or reset session if you need a clean index |
 | "you cannot add same file twice" | Intentional duplicate guard | Check the existing document reference shown in the error |
 | Same file not re-indexed | Duplicate rejection by filename | Rename the file and upload again |
-| Chat history gone after refresh | Session-scoped by design | Re-ask your question; PDFs may still be indexed if session restored |
-| Slow first response | Embedding model + LLM loading | Normal on cold start; subsequent questions are faster |
+| Chat history gone after refresh | New browser session / new `session_id` | Same session may reload messages from SQLite locally; hosted demos are ephemeral |
+| Slow first response | Embedding model + LLM + image captioning | Normal on cold start; subsequent questions are faster |
 
 ---
 
@@ -245,7 +254,10 @@ On hosted demos, files are stored on the server for your session. Treat public i
 Use the **React UI** for the best experience (source panel, download). Use **Streamlit** as a simpler alternative.
 
 **Does chat history persist?**  
-No. Refreshing the browser starts a new session. Indexed PDFs may persist on disk briefly, but do not rely on this on free hosting.
+Locally, messages are stored in SQLite per session and reload when the same `session_id` is used. On public hosted demos, treat history as **ephemeral** — refresh may start a new session. Source citation chips in the UI are not persisted.
+
+**Can the app read charts and diagrams?**  
+Yes, for **embedded images** in the PDF. The app extracts them and uses a Gemma vision model to generate text captions for Q&A. It does not perform full-page OCR on scanned documents.
 
 **Can I use Word or Excel files?**  
 Not currently — only `.pdf` files are supported.
@@ -274,6 +286,10 @@ cp .env.example .env   # add API keys for at least one provider
 # GOOGLE_API_KEY=...          # Gemini
 # LLM_PROVIDER=openrouter       # default provider
 
+# Image extraction + Gemma captions (optional)
+# IMAGE_CAPTION_ENABLED=true
+# IMAGE_CAPTION_MODEL=google/gemma-3-12b-it
+
 # React + API (recommended)
 python run_dev.py
 # → http://localhost:5173 (UI) and http://localhost:8000 (API)
@@ -296,7 +312,7 @@ If you want to see how data flows through the system:
 | React + FastAPI | ![React architecture](screenshots/react-flowchart.png) |
 | Streamlit | ![Streamlit architecture](screenshots/streamlit-flowchart.png) |
 
-For technical depth, see [DESIGN.md](./DESIGN.md).
+For technical depth, see [DESIGN.md](./DESIGN.md) and [MULTIMODAL_DESIGN.md](./MULTIMODAL_DESIGN.md).
 
 ---
 
@@ -311,4 +327,4 @@ For technical depth, see [DESIGN.md](./DESIGN.md).
 
 ---
 
-*Last updated for multi-provider LLM support, Models dropdown, duplicate upload rejection, and line-aware source highlighting.*
+*Last updated for SQLite chat memory, image extraction + Gemma captions, caption-chunk fallback, multi-provider LLM support, Models dropdown, duplicate upload rejection, and line-aware source highlighting.*
