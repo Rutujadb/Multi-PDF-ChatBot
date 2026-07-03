@@ -480,14 +480,14 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 
 ```json
 // POST /api/model
-{ "provider": "groq", "model": "llama-3.3-70b-versatile" }
+{ "provider": "groq", "model": "meta-llama/llama-4-scout-17b-16e-instruct" }
 
 // Response
 {
   "message": "Model updated.",
   "selected_model": {
     "provider": "groq",
-    "model": "llama-3.3-70b-versatile"
+    "model": "meta-llama/llama-4-scout-17b-16e-instruct"
   }
 }
 ```
@@ -515,9 +515,9 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 | `OPENROUTER_API_KEY` | If OpenRouter | LLM generation |
 | `OPENROUTER_MODEL` | No | OpenRouter model slug |
 | `GROQ_API_KEY` | If Groq | LLM generation |
-| `GROQ_MODEL` | No | Groq model slug (default: `llama-3.3-70b-versatile`) |
+| `GROQ_MODEL` | No | Groq model slug (default: `meta-llama/llama-4-scout-17b-16e-instruct`) |
 | `NVIDIA_API_KEY` | If Nvidia | LLM generation |
-| `NVIDIA_MODEL` | No | Nvidia NIM model (default: `meta/llama-3.1-8b-instruct`) |
+| `NVIDIA_MODEL` | No | Nvidia NIM model (default: `meta/llama-4-maverick-17b-128e-instruct`) |
 | `GOOGLE_API_KEY` | If Gemini | Alternative LLM provider |
 | `GEMINI_MODEL_NAME` | No | Gemini model name |
 | `LLM_TOP_P` | No | Decoding `top_p` (default `0.85`) |

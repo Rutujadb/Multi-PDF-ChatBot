@@ -340,9 +340,9 @@ LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=google/gemma-2-9b-it:free
 GROQ_API_KEY=your_key_here
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 NVIDIA_API_KEY=your_key_here
-NVIDIA_MODEL=meta/llama-3.1-8b-instruct
+NVIDIA_MODEL=meta/llama-4-maverick-17b-128e-instruct
 GOOGLE_API_KEY=your_key_here
 
 # Image extraction + Gemma vision captions (optional)

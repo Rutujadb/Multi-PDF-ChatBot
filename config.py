@@ -78,10 +78,10 @@ OPENROUTER_HTTP_REFERER = os.getenv(
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Multi-PDF ChatBot")
 
 GROQ_API_KEY = _read_secret("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
 NVIDIA_API_KEY = _read_secret("NVIDIA_API_KEY")
-NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct")
 
 _explicit_provider = os.getenv("LLM_PROVIDER", "").strip().lower()
 if _explicit_provider in ("gemini", "openrouter", "groq", "nvidia"):
