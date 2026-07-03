@@ -1,8 +1,11 @@
+import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def _read_secret(name: str, default: str = "") -> str:
@@ -78,10 +81,10 @@ OPENROUTER_HTTP_REFERER = os.getenv(
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Multi-PDF ChatBot")
 
 GROQ_API_KEY = _read_secret("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
 NVIDIA_API_KEY = _read_secret("NVIDIA_API_KEY")
-NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-4-maverick-17b-128e-instruct")
 
 _explicit_provider = os.getenv("LLM_PROVIDER", "").strip().lower()
 if _explicit_provider in ("gemini", "openrouter", "groq", "nvidia"):
@@ -105,6 +108,9 @@ if LLM_PROVIDER == "groq" and not GROQ_API_KEY and OPENROUTER_API_KEY:
 
 if LLM_PROVIDER == "nvidia" and not NVIDIA_API_KEY and OPENROUTER_API_KEY:
     LLM_PROVIDER = "openrouter"
+
+logger.info("LLM_PROVIDER=%s | IMAGE_EXTRACTION=%s | IMAGE_CAPTION=%s",
+            LLM_PROVIDER, IMAGE_EXTRACTION_ENABLED, IMAGE_CAPTION_ENABLED)
 
 _image_caption_provider = os.getenv("IMAGE_CAPTION_PROVIDER", "").strip().lower()
 if _image_caption_provider in ("openrouter", "groq", "nvidia", "gemini"):

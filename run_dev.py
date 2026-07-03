@@ -10,11 +10,18 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.util
+import logging
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"

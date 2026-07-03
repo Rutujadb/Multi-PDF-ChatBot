@@ -7,12 +7,15 @@ metadata records for the SQLite manifest (not stored in Chroma).
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
 from config import EXTRACTED_IMAGES_DIR, IMAGE_MIN_HEIGHT, IMAGE_MIN_WIDTH
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_source_stem(source: str) -> str:
@@ -47,8 +50,10 @@ def extract_images_from_pdf(
 
     path = Path(pdf_path)
     if not path.is_file():
+        logger.warning("PDF file not found for image extraction: %s", path)
         return []
 
+    logger.info("Extracting images from PDF: %s (session=%s)", source, sid)
     doc = fitz.open(path)
     records: List[Dict[str, Any]] = []
     seen_hashes: set[str] = set()
@@ -103,4 +108,6 @@ def extract_images_from_pdf(
     finally:
         doc.close()
 
+    logger.info("Extracted %d image(s) from %s (%d pages scanned)",
+                len(records), source, len(doc) if hasattr(doc, '__len__') else 0)
     return records

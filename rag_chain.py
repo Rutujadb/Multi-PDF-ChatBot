@@ -11,10 +11,10 @@ now lives in the ``langchain_classic`` package (it was in ``langchain.*`` in the
 0.2.x era the PLAN was written against).
 """
 
-from typing import Any, Dict, List, Optional
-
 import json
+import logging
 import re
+from typing import Any, Dict, List, Optional
 
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.language_models import BaseLanguageModel
@@ -53,6 +53,8 @@ from image_rag import enrich_documents_with_image_context
 from utils import format_llm_error
 from vector_store import get_indexed_filenames, retrieve_balanced_documents
 
+logger = logging.getLogger(__name__)
+
 
 def get_llm(
     llm_provider: Optional[str] = None,
@@ -67,6 +69,13 @@ def get_llm(
         A LangChain chat-model instance.
     """
     provider = (llm_provider or LLM_PROVIDER).strip().lower()
+    model_name = llm_model or {
+        "openrouter": OPENROUTER_MODEL,
+        "groq": GROQ_MODEL,
+        "nvidia": NVIDIA_MODEL,
+        "gemini": GEMINI_MODEL_NAME,
+    }.get(provider, "unknown")
+    logger.info("Initialising LLM: provider=%s, model=%s", provider, model_name)
 
     if provider == "openrouter":
         if not OPENROUTER_API_KEY:
@@ -169,6 +178,7 @@ def build_rag_chain(
     Returns:
         A configured ``ConversationalRetrievalChain``.
     """
+    logger.info("Building RAG chain (provider=%s, model=%s)", llm_provider, llm_model)
     llm = get_llm(llm_provider=llm_provider, llm_model=llm_model)
 
     # The document-combining step only receives ``context`` and ``question``;
@@ -196,6 +206,7 @@ def build_rag_chain(
         },
         verbose=False,
     )
+    logger.info("RAG chain built successfully")
     return chain
 
 
@@ -220,15 +231,19 @@ def query_chain(
         Dict with ``answer`` (str) and ``source_documents`` (list of Documents).
     """
     try:
+        logger.info("RAG query: %s", question[:120])
         history_messages: list[BaseMessage] = (
             list(chat_history.messages) if chat_history is not None else []
         )
+        logger.debug("Chat history contains %d messages", len(history_messages))
         result = chain.invoke(
             {"question": question, "chat_history": history_messages}
         )
         answer = result.get(
             "answer", "Sorry, I could not generate an answer."
         )
+        logger.info("LLM answered (%d chars), %d source docs returned",
+                     len(answer), len(result.get("source_documents", [])))
         if chat_history is not None:
             chat_history.add_messages(
                 [HumanMessage(content=question), AIMessage(content=answer)]
@@ -246,11 +261,13 @@ def query_chain(
                 vector_store=vector_store,
                 max_sources=CITATION_MAX_SOURCES,
             )
+        logger.info("Citations resolved: %d sources", len(cited_sources))
         return {
             "answer": answer,
             "source_documents": cited_sources,
         }
     except Exception as e:
+        logger.error("RAG query failed: %s", e, exc_info=True)
         return {
             "answer": format_llm_error(e),
             "source_documents": [],
@@ -278,6 +295,7 @@ def answer_from_chat_history(
     Returns:
         Dict with ``answer`` (str) and empty ``source_documents``.
     """
+    logger.info("Answering from chat history (conversation recall): %s", question[:120])
     messages = list(chat_history.messages) if chat_history is not None else []
     human_turns = [
         str(message.content)
@@ -456,6 +474,7 @@ def generate_suggested_questions(
     )
 
     try:
+        logger.info("Generating %d suggested questions from indexed content", count)
         response = get_llm(
             llm_provider=llm_provider,
             llm_model=llm_model,
@@ -463,9 +482,10 @@ def generate_suggested_questions(
         raw = getattr(response, "content", str(response))
         questions = _parse_suggested_questions(raw, count)
         if questions:
+            logger.info("Generated %d suggested questions", len(questions))
             return questions
     except Exception:
-        pass
+        logger.warning("Failed to generate suggested questions, using defaults", exc_info=True)
     return list(EXAMPLE_QUESTIONS[:count])
 
 
@@ -501,6 +521,8 @@ def answer_from_documents(
             "source_documents": [],
         }
 
+    logger.info("Answering from %d explicit documents (provider=%s, model=%s)",
+                len(documents), llm_provider, llm_model)
     labeled_docs = [ensure_page_label(doc) for doc in documents]
     context_docs = enrich_documents_with_image_context(labeled_docs, session_id)
     context = "\n\n".join(
@@ -511,11 +533,13 @@ def answer_from_documents(
     prompt = _qa_template().format(context=context, question=question)
 
     try:
+        logger.info("Invoking LLM for document-targeted answer…")
         response = get_llm(
             llm_provider=llm_provider,
             llm_model=llm_model,
         ).invoke(prompt)
         answer = getattr(response, "content", str(response))
+        logger.info("LLM response received (%d chars)", len(answer))
         if is_refusal_answer(answer):
             cited = []
         else:
@@ -528,6 +552,7 @@ def answer_from_documents(
             )
         return {"answer": answer, "source_documents": cited}
     except Exception as e:
+        logger.error("LLM call failed for document-targeted answer: %s", e, exc_info=True)
         return {
             "answer": format_llm_error(e),
             "source_documents": [],

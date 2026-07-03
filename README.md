@@ -34,9 +34,11 @@
 
 - Upload one or more PDF files into a shared knowledge base
 - Ask natural-language questions answered from PDF content only
+- **Extract embedded images from PDFs** (PyMuPDF) and caption them with a Gemma vision model
 - See which PDF and page each answer came from (source citations)
 - Click a source chip to open a highlighted PDF preview (React UI)
 - Hold a context-aware conversation - follow-up questions understand prior turns
+- **Persistent chat memory** (SQLite) survives app restarts per session
 - Switch between available configured LLMs from a **Models** dropdown
 - Reject duplicate filenames with `you cannot add same file twice`
 - Clear chat or reset the session at any time
@@ -79,8 +81,11 @@
 | API | FastAPI (`api.py`) - wraps the LangChain pipeline for React |
 | Orchestration | LangChain + `langchain-classic` (`ConversationalRetrievalChain`) |
 | PDF parsing | PyPDFLoader / pypdf |
+| Image extraction | PyMuPDF (`pdf_image_extractor.py`) — images on disk, not in Chroma |
+| Image captioning | Gemma vision via OpenRouter or Gemini (`image_captioner.py`) |
 | Embeddings (local) | HuggingFace `all-MiniLM-L6-v2` (384-dim, CPU) |
 | Vector store | ChromaDB (persistent, per-session for React API) |
+| Chat memory | SQLite (`sqlite_memory.py`) — `./data/chat_memory.db` |
 | LLM | OpenRouter, Groq, Nvidia NIM, or Google Gemini |
 | Source preview | PyMuPDF highlights (PNG preview + downloadable annotated PDF) |
 | Config | python-dotenv |
@@ -104,6 +109,7 @@ flowchart LR
     end
     subgraph RAG
         I[Ingestion\npdf_processor]
+        IMG[Image pipeline\npdf_image_pipeline]
         V[Vector Store\nChromaDB]
         G[RAG Chain\nrag_chain]
         C[Citations\ncitation_utils]
@@ -111,12 +117,15 @@ flowchart LR
     subgraph Storage
         P[uploaded_pdfs/]
         D[chroma_db/]
+        M[data/\nchat + images]
     end
     LLM[(OpenRouter / Gemini)]
 
     R --> F
     S --> I
     F --> I
+    I --> IMG
+    IMG --> M
     I --> V
     I --> P
     V --> D
@@ -141,10 +150,17 @@ flowchart TB
     B -->|valid| C{Deduplicate by filename}
     C -->|already indexed| Y[Reject duplicate]
     C -->|new file| D[Save raw PDF to uploaded_pdfs/]
+    D --> IMG[PyMuPDF - extract embedded images]
+    IMG --> CAP[Gemma vision - caption images]
+    CAP --> MAN[(SQLite image manifest\ndata/image_manifest.db)]
+    IMG --> DISK[data/extracted_images/]
     D --> E[PyPDFLoader - extract text per page]
     E --> F[Tag metadata: source, page]
     F --> G[RecursiveCharacterTextSplitter\n500 chars / 50 overlap]
-    G --> H[Enrich metadata:\nline, start_index, page_label]
+    G --> G2{Text chunks?}
+    G2 -->|no| FB[Fallback: index from image captions]
+    G2 -->|yes| H[Enrich metadata:\nline, start_index, page_label]
+    FB --> H
     H --> I[HuggingFace embeddings\nall-MiniLM-L6-v2]
     I --> J[ChromaDB - append chunks]
     J --> K[Rebuild ConversationalRetrievalChain]
@@ -157,7 +173,11 @@ flowchart TB
 | Validation | `utils.py` | PDF extension + non-empty file check |
 | Dedup | `filter_new_files()` | Filename match against indexed sources - no re-embedding |
 | Persist PDF | `pdf_storage.py` | `uploaded_pdfs/{filename}` for source preview |
-| Extract | `pdf_processor.py` | Temp file → PyPDFLoader → one `Document` per page |
+| Extract images | `pdf_image_extractor.py` | PyMuPDF → `data/extracted_images/{session}/{pdf}/` |
+| Caption images | `image_captioner.py` | Gemma vision → text stored in `data/image_manifest.db` |
+| Image manifest | `image_store.py` | SQLite refs + captions (**not** stored in Chroma) |
+| Orchestration | `pdf_image_pipeline.py` | Extract → caption → caption-chunk fallback |
+| Extract text | `pdf_processor.py` | Temp file → PyPDFLoader → one `Document` per page |
 | Chunk | `pdf_processor.py` | Split **per page** so `line` metadata is accurate |
 | Embed | `vector_store.py` | Local model, no API key; torch loaded before chromadb (Windows safety) |
 | Store | `vector_store.py` | Streamlit: `./chroma_db/` · React API: `./chroma_db/api_sessions/{session_id}/` |
@@ -189,10 +209,11 @@ flowchart TB
     R -->|summarise / each pdf / all docs| M[retrieve_balanced_documents\n4 chunks per PDF]
     R -->|default| B[Balanced retriever\nper-file + global top-k]
 
-    P --> CTX[Assemble labeled context\nFrom filename, page N]
+    P --> CTX[Assemble labeled context\nFrom filename, page N + image captions]
     M --> CTX
     B --> CH[ConversationalRetrievalChain]
-    CH --> CTX
+    CH --> IMG[image_rag.py\nappend page image captions]
+    IMG --> CTX
 
     CTX --> LLM[OpenRouter / Gemini\nstrict grounding prompt]
     LLM --> ANS[Answer text]
@@ -205,7 +226,7 @@ flowchart TB
 |---|---|---|
 | **Page-targeted** | `"page 7 of report.pdf"` | `get_page_documents()` - all chunks on that page |
 | **Multi-doc overview** | `"summarise"`, `"what each pdf is about"` | `retrieve_balanced_documents(per_file_k=4)` → `answer_from_documents()` |
-| **Default Q&A** | Everything else | `ConversationalRetrievalChain` with **balanced retriever** |
+| **Default Q&A** | Everything else | `ConversationalRetrievalChain` with **balanced retriever** + `image_rag.py` caption context |
 
 **Balanced retrieval** (`retrieve_balanced_documents`) - the core fix for multi-PDF:
 
@@ -242,12 +263,13 @@ This prevents one large PDF from filling all retrieval slots.
 | **Dual UI** | React + Streamlit | React matches design system; Streamlit is quick to deploy on Community Cloud |
 | **API layer** | FastAPI for React only | Keeps Streamlit self-contained; shared Python modules unchanged |
 | **Per-session Chroma (React)** | `chroma_db/api_sessions/{id}/` | Isolates sessions; survives API restart when `session_id` is restored |
-| **Per-session chat history** | `InMemoryChatMessageHistory` | Keeps each chat session's conversation isolated |
+| **Per-session chat history** | SQLite (`sqlite_memory.py`) | Persists conversation turns to `./data/chat_memory.db` |
 | **Balanced retrieval** | Per-file + global merge | Plain top-k failed on multi-PDF - one document dominated results |
 | **Overview routing** | Regex intent detection | `"summarise"` and `"each pdf"` need guaranteed per-file context |
 | **Citation diversity** | Per-PDF minimum in UI | Answer could mention 2 PDFs while sources showed only 1 |
 | **Precise highlight targeting** | Line-aware phrase search | Cited `page` + `line` should highlight that line, not broad page text |
 | **PDF on disk** | `uploaded_pdfs/` | Enables PyMuPDF highlight preview; vectors alone are not enough |
+| **Images outside Chroma** | `data/extracted_images/` + SQLite manifest | Professor/design constraint: caption with LLM, index text only |
 | **LLM grounding** | Strict refusal phrase | Prevents hallucination outside uploaded content |
 | **LLM sampling** | `top_p=0.85`, `top_k=40` | Keeps language natural while reducing random token choices |
 | **Source preview (Streamlit Cloud)** | PNG not iframe PDF | Chrome blocks PDF iframes on Streamlit Cloud |
@@ -318,12 +340,19 @@ LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_key_here
 OPENROUTER_MODEL=google/gemma-2-9b-it:free
 GROQ_API_KEY=your_key_here
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 NVIDIA_API_KEY=your_key_here
-NVIDIA_MODEL=meta/llama-3.1-8b-instruct
+NVIDIA_MODEL=meta/llama-4-maverick-17b-128e-instruct
 GOOGLE_API_KEY=your_key_here
 
+# Image extraction + Gemma vision captions (optional)
+IMAGE_EXTRACTION_ENABLED=true
+IMAGE_CAPTION_ENABLED=true
+IMAGE_CAPTION_PROVIDER=openrouter
+IMAGE_CAPTION_MODEL=google/gemma-3-12b-it
+
 VECTOR_STORE=chroma
+CHAT_DB_PATH=./data/chat_memory.db
 STREAMLIT_APP_URL=https://multi-pdf-chatbot-rb.streamlit.app/
 ```
 
@@ -392,19 +421,43 @@ multi-pdf-chatbot/
 ├── api_upload.py           # FastAPI upload helpers
 ├── api_source_preview.py   # Highlighted PDF preview/download (React)
 ├── run_dev.py              # Start React + API (+ optional Streamlit)
+├── start.py                # Production-style launcher
 ├── frontend/               # React + Tailwind UI
 │   ├── public/favicon.svg  # App logo
 │   └── src/
+│       ├── pages/          # Landing, Dashboard
+│       ├── components/     # Logo, SourceViewerPanel
+│       └── api/client.js   # FastAPI client
 ├── pdf_processor.py        # PDF load, chunk, dedup
 ├── pdf_storage.py          # Persist PDFs for preview
+├── pdf_image_extractor.py  # PyMuPDF embedded image extraction
+├── image_store.py          # SQLite manifest for extracted images
+├── image_captioner.py      # Gemma vision image → text captions
+├── pdf_image_pipeline.py   # Upload orchestration + caption fallback chunks
+├── image_rag.py            # Inject image captions into RAG context
 ├── vector_store.py         # ChromaDB, embeddings, balanced retrieval
-├── rag_chain.py            # LangChain RAG + session chat history
+├── rag_chain.py            # LangChain RAG + SQLite chat history
+├── sqlite_memory.py        # Persistent session chat memory (SQLite)
 ├── citation_utils.py       # Answer-aligned citation ranking
 ├── source_viewer.py        # Streamlit source panel
 ├── utils.py                # Validation, source formatting, routing helpers
 ├── config.py               # Constants and env vars
-├── docs/screenshots/       # Workflow screenshots (add your images here)
+├── docs/
+│   ├── DESIGN.md           # Architecture, pipelines, API
+│   ├── USER_MANUAL.md      # Step-by-step usage guide
+│   ├── MULTIMODAL_DESIGN.md # Image extraction + multimodal RAG design
+│   └── screenshots/        # Workflow screenshots
+├── tests/                  # Pytest suite
+│   ├── test_pdf_image_extractor.py
+│   ├── test_sqlite_memory.py
+│   ├── test_conversation_recall.py
+│   └── test_vector_store_retrieval.py
+├── data/                   # Local runtime data (git-ignored, auto-created)
+│   ├── chat_memory.db      # SQLite chat history
+│   ├── image_manifest.db   # Extracted image metadata + captions
+│   └── extracted_images/   # PNG/JPEG files from PDFs
 ├── chroma_db/              # Persisted vectors (auto-created)
+│   └── api_sessions/       # Per-session Chroma for React API
 └── uploaded_pdfs/          # Persisted PDFs for preview (auto-created)
 ```
 
@@ -412,18 +465,21 @@ multi-pdf-chatbot/
 
 - [Design document](docs/DESIGN.md) — architecture, pipelines, API, decisions
 - [User manual](docs/USER_MANUAL.md) — step-by-step usage guide
+- [Multimodal design](docs/MULTIMODAL_DESIGN.md) — image extraction, Gemma captions, RAG integration
 
 ## Known limitations
 
 - **Single-user / localhost** - not designed for concurrent multi-user production load
-- **Text-based PDFs only** - scanned image-only PDFs are not supported (no OCR)
-- **Chat history is session-scoped** - isolated per session and lost on browser refresh
+- **Text-first PDFs** - selectable text works best; image-heavy PDFs fall back to Gemma captions (not full OCR)
+- **Embedded images only** - scanned pages without embedded image objects need a future page-render path
+- **Chat history is session-scoped** - persisted in SQLite per `session_id`, but not multi-user cloud sync
 - **LLM rate limits** apply per provider (OpenRouter / Groq / Nvidia / Gemini free tiers)
 - **React deploy** — live at [Vercel](https://multi-pdf-chat-bot.vercel.app/) + [Render API](https://multi-pdf-chatbot-y6nu.onrender.com); free tier API sleeps when idle and has ephemeral disk
 
 ## Future scope
 
-- **OCR for scanned documents** - support image-only PDFs by extracting text from scans before chunking and indexing
+- **OCR for scanned documents** - full-page OCR when neither text nor embedded images are available
+- **Image thumbnails in citations** - show extracted figures beside source chips
 - **Real-time suggested follow-ups**
   - After each answer, generate contextual follow-up questions from the user's question and the assistant's response
   - When chat is empty but PDFs are indexed, generate starter questions from the processed document index (topics and content across uploaded files)

@@ -5,11 +5,20 @@ modules. All stateful data lives in ``st.session_state``.
 
 SRS references: FR-UI-01 → FR-UI-07, FR-PDF-01, FR-MEM-01, FR-MEM-03, FR-MEM-04.
 """
+import logging
 import os
 import uuid
 from pathlib import Path
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_streamlit_secrets() -> None:
@@ -162,6 +171,7 @@ def initialise_session_state():
     On first load, an existing ChromaDB store (from a previous session) is
     reloaded from disk so the user does not need to re-upload PDFs.
     """
+    logger.info("Initialising Streamlit session state")
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "session_id" not in st.session_state:
@@ -301,10 +311,13 @@ def process_uploaded_pdfs(uploaded_files):
     Args:
         uploaded_files: Files from the sidebar uploader.
     """
+    logger.info("Processing %d uploaded file(s)", len(uploaded_files))
     valid_files, invalid_files = validate_pdf_files(uploaded_files)
     new_files, skipped = filter_new_files(
         valid_files, st.session_state.indexed_files
     )
+    logger.info("Validation: %d valid, %d invalid, %d new, %d skipped",
+                len(valid_files), len(invalid_files), len(new_files), len(skipped))
 
     if invalid_files:
         st.error(f"Invalid files skipped: {', '.join(invalid_files)}")
@@ -327,6 +340,7 @@ def process_uploaded_pdfs(uploaded_files):
             uploaded.seek(0)
             pdf_path = get_pdf_path(uploaded.name)
             if pdf_path is not None:
+                logger.info("Running image extraction for %s", uploaded.name)
                 image_stats = process_pdf_images(
                     st.session_state.session_id,
                     uploaded.name,
@@ -338,6 +352,7 @@ def process_uploaded_pdfs(uploaded_files):
                         f"{uploaded.name}."
                     )
 
+        logger.info("Loading text from %d PDF(s)", len(new_files))
         documents, failed = load_pdfs(new_files)
         if failed:
             st.warning(f"Could not read (skipped): {', '.join(failed)}")
@@ -373,12 +388,15 @@ def process_uploaded_pdfs(uploaded_files):
             )
             return
 
+        logger.info("Indexing %d chunk(s) into vector store", len(chunks))
         vector_store = create_or_update_vector_store(
             chunks,
             existing_store=st.session_state.get("vector_store"),
         )
         st.session_state.vector_store = vector_store
         rebuild_chain()
+        logger.info("Indexing complete — %d file(s) indexed, chain ready=%s",
+                     len(st.session_state.indexed_files), st.session_state.chain is not None)
 
         if not st.session_state.indexed_files or st.session_state.chain is None:
             st.error(
@@ -394,6 +412,7 @@ def remove_file(filename: str):
     """Remove a single indexed PDF and refresh the chain (FR-MEM, doc mgmt)."""
     from image_store import delete_images_for_source
 
+    logger.info("Removing file: %s", filename)
     delete_file(st.session_state.vector_store, filename)
     delete_pdf(filename)
     delete_images_for_source(st.session_state.session_id, filename)
@@ -406,6 +425,7 @@ def remove_file(filename: str):
 
 def clear_chat():
     """Clear the conversation while keeping the indexed PDFs (FR-MEM-03)."""
+    logger.info("Clearing chat history")
     dismiss_pdf_viewer()
     st.session_state.pdf_viewer_stage = "cleanup"
     st.session_state.messages = []
@@ -416,6 +436,7 @@ def reset_session():
     """Clear chat history and the indexed knowledge base (FR-MEM-04)."""
     from image_store import delete_images_for_session
 
+    logger.info("Resetting session %s", st.session_state.session_id)
     db_delete_session(st.session_state.session_id)
     delete_images_for_session(st.session_state.session_id)
     clear_vector_store(st.session_state.get("vector_store"))
@@ -556,6 +577,7 @@ def handle_question(prompt: str):
 
     with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
         with st.spinner("Searching your documents..."):
+            logger.info("User question: %s", prompt[:120])
             result = answer_prompt(prompt)
             answer = result["answer"]
             source_items = extract_source_items(
@@ -597,6 +619,7 @@ def answer_prompt(prompt: str) -> dict:
     indexed_files = st.session_state.indexed_files
 
     if is_conversation_recall_question(prompt):
+        logger.info("Routing to conversation recall handler")
         return answer_from_chat_history(
             prompt,
             st.session_state.memory,
@@ -606,6 +629,7 @@ def answer_prompt(prompt: str) -> dict:
 
     ref_file, ref_page = parse_page_reference(prompt, indexed_files)
     if ref_file and ref_page:
+        logger.info("Page-targeted query: %s page %d", ref_file, ref_page)
         page_docs = get_page_documents(
             st.session_state.vector_store, ref_file, ref_page
         )
@@ -627,6 +651,7 @@ def answer_prompt(prompt: str) -> dict:
         # No text on that page → fall through to normal retrieval.
 
     if is_multi_document_overview(prompt, len(indexed_files)):
+        logger.info("Routing to multi-document overview handler")
         overview_docs = retrieve_balanced_documents(
             st.session_state.vector_store,
             prompt,

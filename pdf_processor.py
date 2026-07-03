@@ -6,6 +6,7 @@ This module turns Streamlit ``UploadedFile`` objects into chunked LangChain
 SRS references: FR-PDF-01, FR-PDF-02, FR-PDF-03, FR-PDF-04, FR-PDF-05.
 """
 
+import logging
 import os
 import tempfile
 from typing import List, Tuple
@@ -15,6 +16,8 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import CHUNK_SIZE, CHUNK_OVERLAP
+
+logger = logging.getLogger(__name__)
 
 
 def load_pdfs(uploaded_files) -> Tuple[List[Document], List[str]]:
@@ -41,8 +44,7 @@ def load_pdfs(uploaded_files) -> Tuple[List[Document], List[str]]:
     for uploaded_file in uploaded_files:
         tmp_path = None
         try:
-            # PyPDFLoader needs a real file path, so persist the upload to a
-            # temporary file first.
+            logger.info("Loading PDF: %s", uploaded_file.name)
             with tempfile.NamedTemporaryFile(
                 delete=False, suffix=".pdf"
             ) as tmp_file:
@@ -52,17 +54,20 @@ def load_pdfs(uploaded_files) -> Tuple[List[Document], List[str]]:
             loader = PyPDFLoader(tmp_path)
             documents = loader.load()
 
-            # Tag every page with the original filename for source citation.
             for doc in documents:
                 doc.metadata["source"] = uploaded_file.name
 
+            logger.info("Loaded %d page(s) from %s", len(documents), uploaded_file.name)
             all_documents.extend(documents)
         except Exception:
+            logger.error("Failed to load PDF: %s", uploaded_file.name, exc_info=True)
             failed_files.add(uploaded_file.name)
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+    logger.info("PDF loading complete: %d pages from %d file(s), %d failed",
+                len(all_documents), len(uploaded_files) - len(failed_files), len(failed_files))
     return all_documents, list(failed_files)
 
 
@@ -91,8 +96,6 @@ def split_documents(documents: List[Document]) -> List[Document]:
 
     all_chunks: List[Document] = []
     for document in documents:
-        # Split one page at a time so each chunk's ``start_index`` is an offset
-        # within that page's text, letting us derive a per-page line number.
         for chunk in splitter.split_documents([document]):
             start = chunk.metadata.get("start_index", 0)
             chunk.metadata["line"] = document.page_content[:start].count("\n") + 1
@@ -101,6 +104,8 @@ def split_documents(documents: List[Document]) -> List[Document]:
                 chunk.metadata["page_label"] = page + 1
             all_chunks.append(chunk)
 
+    logger.info("Chunking complete: %d documents → %d chunks (size=%d, overlap=%d)",
+                len(documents), len(all_chunks), CHUNK_SIZE, CHUNK_OVERLAP)
     return all_chunks
 
 

@@ -51,17 +51,22 @@ def process_pdf_images(
         Dict with ``extracted``, ``stored``, and ``captioned`` counts.
     """
     if not IMAGE_EXTRACTION_ENABLED:
+        logger.info("Image extraction disabled; skipping %s", source)
         return {"extracted": 0, "stored": 0, "captioned": 0}
 
+    logger.info("Starting image pipeline for %s (session=%s)", source, session_id)
     try:
         records = extract_images_from_pdf(pdf_path, session_id, source)
         stored_rows = insert_images(records)
+        logger.info("Extracted %d, stored %d images for %s",
+                     len(records), len(stored_rows), source)
     except Exception as exc:
-        logger.warning("Image extraction failed for %s: %s", source, exc)
+        logger.error("Image extraction failed for %s: %s", source, exc, exc_info=True)
         return {"extracted": 0, "stored": 0, "captioned": 0, "error": str(exc)}
 
     captioned = 0
     if IMAGE_CAPTION_ENABLED:
+        logger.info("Captioning %d image(s) for %s", len(stored_rows), source)
         for row in stored_rows:
             if row.get("caption"):
                 continue
@@ -74,6 +79,8 @@ def process_pdf_images(
                 update_caption(row["image_id"], caption, IMAGE_CAPTION_MODEL)
                 captioned += 1
 
+    logger.info("Image pipeline done for %s: extracted=%d, stored=%d, captioned=%d",
+                source, len(records), len(stored_rows), captioned)
     return {
         "extracted": len(records),
         "stored": len(stored_rows),

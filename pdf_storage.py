@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 from typing import Optional
 
 from config import UPLOADED_PDF_DIR
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_storage_dir() -> Path:
@@ -28,6 +31,7 @@ def save_uploaded_pdf(filename: str, file_bytes: bytes) -> Path:
     ensure_storage_dir()
     path = UPLOADED_PDF_DIR / filename
     path.write_bytes(file_bytes)
+    logger.info("Saved uploaded PDF to disk: %s (%d bytes)", path, len(file_bytes))
     return path
 
 
@@ -42,10 +46,12 @@ def delete_pdf(filename: str) -> None:
     path = UPLOADED_PDF_DIR / filename
     if path.is_file():
         path.unlink()
+        logger.info("Deleted PDF from disk: %s", filename)
 
 
 def clear_all_pdfs() -> None:
     """Delete every persisted PDF (used by Reset All)."""
     if UPLOADED_PDF_DIR.exists():
         shutil.rmtree(UPLOADED_PDF_DIR)
+        logger.info("Cleared all persisted PDFs from %s", UPLOADED_PDF_DIR)
     ensure_storage_dir()
