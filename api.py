@@ -9,6 +9,7 @@ SRS references: FR-UI-01 → FR-UI-07, FR-PDF-01, FR-MEM-01 → FR-MEM-04.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from config import (
     APP_NAME,
@@ -470,14 +473,17 @@ def health_check():
 @app.post("/api/session")
 def create_api_session():
     """Start a fresh API session (used by the React dashboard on load)."""
+    logger.info("POST /api/session — creating new session")
     session = create_session()
     _sessions[session.session_id] = session
+    logger.info("Session created: %s", session.session_id)
     return {"session_id": session.session_id}
 
 
 @app.get("/api/status")
 def get_status(session_id: Optional[str] = None):
     """Return session, index, and configuration details for the dashboard."""
+    logger.info("GET /api/status (session=%s)", session_id)
     session = get_session(session_id)
     ensure_session_vector_store(session)
     session.ensure_llm_selection()
@@ -520,6 +526,7 @@ def get_status(session_id: Optional[str] = None):
 @app.post("/api/model")
 def set_active_model(body: ModelSelectionRequest, session_id: Optional[str] = None):
     """Update the active provider/model for one API session."""
+    logger.info("POST /api/model — provider=%s, model=%s", body.provider, body.model)
     session = get_session(session_id)
     available = get_available_llm_options()
     available_by_key = {
@@ -549,6 +556,8 @@ async def upload_pdfs(
     session_id: Optional[str] = None,
 ):
     """Validate, embed, and index uploaded PDF files."""
+    logger.info("POST /api/upload — %d file(s) received (session=%s)",
+                len(files) if isinstance(files, list) else 1, session_id)
     session = get_session(session_id)
     upload_files = _normalize_upload_files(files)
     if not upload_files:
@@ -596,11 +605,13 @@ async def upload_pdfs(
         }
 
     persist_api_uploads(new_files)
+    logger.info("Processing %d new PDF(s) for session %s", len(new_files), session.session_id)
     image_summary = {"extracted": 0, "captioned": 0}
     for upload in new_files:
         pdf_path = get_pdf_path(upload.name)
         if pdf_path is None:
             continue
+        logger.info("Running image extraction for %s", upload.name)
         image_stats = process_pdf_images(session.session_id, upload.name, pdf_path)
         image_summary["extracted"] += image_stats.get("extracted", 0)
         image_summary["captioned"] += image_stats.get("captioned", 0)
@@ -627,6 +638,7 @@ async def upload_pdfs(
             detail="Could not index the uploaded PDF(s). Add selectable text or enable image captioning.",
         )
 
+    logger.info("Indexing %d chunk(s) into vector store", len(chunks))
     persist_dir = session_chroma_dir(session.session_id)
     session.vector_store = create_or_update_vector_store(
         chunks,
@@ -640,6 +652,8 @@ async def upload_pdfs(
     }
 
     session.rebuild_chain()
+    logger.info("Upload complete — %d file(s) indexed, chain ready=%s",
+                len(session.indexed_files), session.chain is not None)
     if not session.indexed_files or session.chain is None:
         raise HTTPException(
             status_code=500,
@@ -673,6 +687,8 @@ async def upload_pdfs(
 @app.post("/api/chat")
 def chat(payload: ChatRequest, session_id: Optional[str] = None):
     """Ask a question against the indexed knowledge base."""
+    logger.info("POST /api/chat (session=%s): %s", session_id,
+                (payload.message or "")[:120])
     session = get_session(session_id)
     ensure_session_vector_store(session)
     prompt = (payload.message or "").strip()
@@ -680,7 +696,11 @@ def chat(payload: ChatRequest, session_id: Optional[str] = None):
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     session.messages.append({"role": "user", "text": prompt})
+    logger.info("Querying RAG chain…")
     result = answer_question(session, prompt)
+    logger.info("Answer generated (%d chars), %d sources",
+                len(result.get("answer", "")),
+                len(result.get("source_documents", [])))
     answer = result["answer"]
     source_items = extract_source_items(
         result.get("source_documents", []), answer=answer
@@ -710,6 +730,7 @@ def chat(payload: ChatRequest, session_id: Optional[str] = None):
 @app.post("/api/clear-chat")
 def clear_chat(session_id: Optional[str] = None):
     """Clear chat history while keeping indexed PDFs."""
+    logger.info("POST /api/clear-chat (session=%s)", session_id)
     session = get_session(session_id)
     session.ensure_memory().clear()
     session.messages = []
@@ -720,6 +741,7 @@ def clear_chat(session_id: Optional[str] = None):
 @app.post("/api/reset")
 def reset_session(session_id: Optional[str] = None):
     """Clear chat history and wipe the indexed knowledge base."""
+    logger.info("POST /api/reset (session=%s)", session_id)
     (
         clear_vector_store,
         _create,

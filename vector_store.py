@@ -14,6 +14,7 @@ IMPORTANT (Windows native-library ordering):
     torch model) before the lazy chromadb import inside each function.
 """
 
+import logging
 import os
 from typing import TYPE_CHECKING, List, Optional
 
@@ -29,6 +30,8 @@ from config import (
     TOP_K_RESULTS,
 )
 from citation_utils import ensure_page_label
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # for type hints only; not imported at runtime
     from langchain_chroma import Chroma
@@ -52,11 +55,13 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     """
     global _embeddings
     if _embeddings is None:
+        logger.info("Loading embedding model '%s' on CPU…", EMBEDDING_MODEL_NAME)
         _embeddings = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL_NAME,
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True},
         )
+        logger.info("Embedding model loaded successfully")
     return _embeddings
 
 
@@ -94,24 +99,29 @@ def create_or_update_vector_store(
     """
     if existing_store is not None:
         if chunks:
+            logger.info("Adding %d chunks to existing vector store", len(chunks))
             existing_store.add_documents(chunks)
             if _indexed_chunk_count(existing_store) == 0:
+                logger.warning("Existing store reports 0 chunks after add; recreating")
                 return create_or_update_vector_store(chunks, persist_dir=persist_dir)
         return existing_store
 
     target_dir = _resolve_persist_dir(persist_dir)
-    embeddings = get_embeddings()  # load torch model before importing chromadb
+    embeddings = get_embeddings()
     from langchain_chroma import Chroma
 
     if os.path.exists(target_dir):
+        logger.info("Opening existing ChromaDB at %s", target_dir)
         vector_store = Chroma(
             collection_name=CHROMA_COLLECTION_NAME,
             embedding_function=embeddings,
             persist_directory=target_dir,
         )
         if chunks:
+            logger.info("Appending %d chunks to ChromaDB", len(chunks))
             vector_store.add_documents(chunks)
             if _indexed_chunk_count(vector_store) == 0:
+                logger.warning("ChromaDB reports 0 chunks after append; recreating collection")
                 vector_store = Chroma.from_documents(
                     documents=chunks,
                     embedding=embeddings,
@@ -119,6 +129,7 @@ def create_or_update_vector_store(
                     persist_directory=target_dir,
                 )
     else:
+        logger.info("Creating new ChromaDB at %s with %d chunks", target_dir, len(chunks))
         os.makedirs(target_dir, exist_ok=True)
         vector_store = Chroma.from_documents(
             documents=chunks,
@@ -127,6 +138,7 @@ def create_or_update_vector_store(
             persist_directory=target_dir,
         )
 
+    logger.info("Vector store ready — %d total chunks indexed", _indexed_chunk_count(vector_store))
     return vector_store
 
 
@@ -144,9 +156,11 @@ def load_existing_vector_store(
     """
     target_dir = _resolve_persist_dir(persist_dir)
     if not os.path.exists(target_dir):
+        logger.info("No persisted vector store found at %s", target_dir)
         return None
 
-    embeddings = get_embeddings()  # load torch model before importing chromadb
+    logger.info("Loading persisted vector store from %s", target_dir)
+    embeddings = get_embeddings()
     from langchain_chroma import Chroma
 
     vector_store = Chroma(
@@ -154,6 +168,7 @@ def load_existing_vector_store(
         embedding_function=embeddings,
         persist_directory=target_dir,
     )
+    logger.info("Loaded vector store with %d chunks", _indexed_chunk_count(vector_store))
     return vector_store
 
 
@@ -297,6 +312,7 @@ def get_retriever(
     if IMAGE_EXTRACTION_ENABLED and sid:
         from image_rag import ImageEnrichingRetriever
 
+        logger.info("Wrapping retriever with ImageEnrichingRetriever for session %s", sid)
         return ImageEnrichingRetriever(base, sid)
     return base
 
@@ -319,8 +335,10 @@ def clear_vector_store(vector_store: "Chroma") -> bool:
         return False
     try:
         vector_store.delete_collection()
+        logger.info("Vector store collection cleared")
         return True
     except Exception:
+        logger.error("Failed to clear vector store collection", exc_info=True)
         return False
 
 
@@ -341,8 +359,10 @@ def delete_file(vector_store: "Chroma", filename: str) -> bool:
         return False
     try:
         vector_store._collection.delete(where={"source": filename})
+        logger.info("Deleted chunks for source '%s' from vector store", filename)
         return True
     except Exception:
+        logger.error("Failed to delete chunks for '%s'", filename, exc_info=True)
         return False
 
 

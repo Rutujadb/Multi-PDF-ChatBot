@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from config import IMAGE_DB_PATH
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS pdf_images (
@@ -49,6 +52,7 @@ def init_db(db_path: Optional[Path] = None) -> None:
     with sqlite3.connect(str(path)) as conn:
         conn.executescript(_SCHEMA_SQL)
         conn.commit()
+    logger.debug("Image manifest DB initialised at %s", path)
 
 
 def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -74,6 +78,7 @@ def insert_images(
     if not records:
         return []
 
+    logger.info("Inserting %d image record(s) into manifest", len(records))
     created_at = _utc_now()
     inserted: List[Dict[str, Any]] = []
     with _connect(db_path) as conn:
@@ -115,6 +120,7 @@ def insert_images(
             if row is not None:
                 inserted.append(_row_to_dict(row))
         conn.commit()
+    logger.info("Stored %d image record(s) in manifest", len(inserted))
     return inserted
 
 
@@ -125,6 +131,7 @@ def update_caption(
     db_path: Optional[Path] = None,
 ) -> None:
     """Persist a Gemma-generated caption for one image."""
+    logger.debug("Updating caption for image %s (model=%s)", image_id, caption_model)
     with _connect(db_path) as conn:
         conn.execute(
             """
@@ -215,6 +222,7 @@ def delete_images_for_source(
     db_path: Optional[Path] = None,
 ) -> None:
     """Delete manifest rows and image files for one PDF source."""
+    logger.info("Deleting images for source '%s' in session %s", source, session_id)
     sid = (session_id or "").strip()
     with _connect(db_path) as conn:
         rows = conn.execute(
@@ -241,6 +249,7 @@ def delete_images_for_session(
     db_path: Optional[Path] = None,
 ) -> None:
     """Delete all image records and files for one session."""
+    logger.info("Deleting all images for session %s", session_id)
     sid = (session_id or "").strip()
     with _connect(db_path) as conn:
         rows = conn.execute(

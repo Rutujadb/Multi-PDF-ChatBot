@@ -1,8 +1,11 @@
+import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def _read_secret(name: str, default: str = "") -> str:
@@ -105,6 +108,9 @@ if LLM_PROVIDER == "groq" and not GROQ_API_KEY and OPENROUTER_API_KEY:
 
 if LLM_PROVIDER == "nvidia" and not NVIDIA_API_KEY and OPENROUTER_API_KEY:
     LLM_PROVIDER = "openrouter"
+
+logger.info("LLM_PROVIDER=%s | IMAGE_EXTRACTION=%s | IMAGE_CAPTION=%s",
+            LLM_PROVIDER, IMAGE_EXTRACTION_ENABLED, IMAGE_CAPTION_ENABLED)
 
 _image_caption_provider = os.getenv("IMAGE_CAPTION_PROVIDER", "").strip().lower()
 if _image_caption_provider in ("openrouter", "groq", "nvidia", "gemini"):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
 from pathlib import Path
 from typing import Optional
@@ -17,6 +18,8 @@ from config import (
     OPENROUTER_API_KEY,
 )
 from utils import format_llm_error
+
+logger = logging.getLogger(__name__)
 
 
 _CAPTION_PROMPT = """Describe this image extracted from a PDF page for a document Q&A system.
@@ -52,6 +55,7 @@ def get_caption_llm(
     if chosen_provider == "gemini" and not GOOGLE_API_KEY and OPENROUTER_API_KEY:
         chosen_provider = "openrouter"
 
+    logger.info("Caption LLM: provider=%s, model=%s", chosen_provider, chosen_model)
     return get_llm(llm_provider=chosen_provider, llm_model=chosen_model)
 
 
@@ -79,7 +83,10 @@ def caption_image(
 
     path = Path(image_path)
     if not path.is_file():
+        logger.warning("Image file not found for captioning: %s", image_path)
         return ""
+
+    logger.info("Captioning image: %s (source=%s, page=%s)", path.name, source, page_label)
 
     context_bits = []
     if source:
@@ -101,6 +108,8 @@ def caption_image(
     try:
         response = get_caption_llm(provider=provider, model=model).invoke([message])
         text = getattr(response, "content", str(response)).strip()
+        logger.info("Caption generated for %s (%d chars)", path.name, len(text))
         return text
     except Exception as exc:
+        logger.error("Caption API call failed for %s: %s", path.name, exc, exc_info=True)
         return format_llm_error(exc)

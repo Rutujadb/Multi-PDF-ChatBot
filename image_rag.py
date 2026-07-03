@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import List, Optional
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
@@ -10,6 +11,8 @@ from langchain_core.retrievers import BaseRetriever
 
 from config import IMAGE_EXTRACTION_ENABLED
 from image_store import get_images_for_page
+
+logger = logging.getLogger(__name__)
 
 
 def build_image_context_block(
@@ -48,6 +51,8 @@ def enrich_documents_with_image_context(
     if not IMAGE_EXTRACTION_ENABLED or not session_id or not documents:
         return documents
 
+    logger.debug("Enriching %d documents with image context (session=%s)",
+                 len(documents), session_id)
     cache: dict[tuple[str, int], str] = {}
     enriched: List[Document] = []
     for doc in documents:
@@ -92,5 +97,7 @@ class ImageEnrichingRetriever(BaseRetriever):
         run_manager: CallbackManagerForRetrieverRun | None = None,
     ) -> List[Document]:
         """Retrieve documents and enrich them with image caption context."""
+        logger.debug("ImageEnrichingRetriever: retrieving for query '%s'", query[:80])
         docs = self._base_retriever.invoke(query)
+        logger.debug("Base retriever returned %d docs; enriching with image context", len(docs))
         return enrich_documents_with_image_context(docs, self._session_id)

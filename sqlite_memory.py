@@ -10,6 +10,7 @@ Schema:
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,8 @@ from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from config import CHAT_DB_PATH
+
+logger = logging.getLogger(__name__)
 
 VALID_ROLES = frozenset({"user", "assistant", "system"})
 
@@ -91,6 +94,7 @@ def create_session(session_id: str, db_path: Optional[Path] = None) -> Dict[str,
     if not sid:
         raise ValueError("session_id cannot be empty.")
 
+    logger.info("Creating chat session: %s", sid)
     now = _utc_now()
     with _connect(db_path) as conn:
         conn.execute(
@@ -202,6 +206,7 @@ def append_message(
     if not body:
         raise ValueError("content cannot be empty.")
 
+    logger.debug("Appending %s message to session %s", normalized_role, sid)
     create_session(sid, db_path=db_path)
     ts = timestamp or _utc_now()
     with _connect(db_path) as conn:
@@ -292,6 +297,7 @@ def clear_messages(session_id: str, db_path: Optional[Path] = None) -> int:
     sid = (session_id or "").strip()
     if not sid:
         return 0
+    logger.info("Clearing all messages for session %s", sid)
     now = _utc_now()
     with _connect(db_path) as conn:
         cursor = conn.execute(
@@ -315,6 +321,7 @@ def delete_session(session_id: str, db_path: Optional[Path] = None) -> bool:
     sid = (session_id or "").strip()
     if not sid:
         return False
+    logger.info("Deleting chat session: %s", sid)
     with _connect(db_path) as conn:
         cursor = conn.execute(
             "DELETE FROM chat_sessions WHERE session_id = ?",
