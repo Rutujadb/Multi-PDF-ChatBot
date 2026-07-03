@@ -86,6 +86,7 @@
 | Embeddings (local) | HuggingFace `all-MiniLM-L6-v2` (384-dim, CPU) |
 | Vector store | ChromaDB (persistent, per-session for React API) |
 | Chat memory | SQLite (`sqlite_memory.py`) — `./data/chat_memory.db` |
+| Logging | Python `logging` — structured terminal output across all modules |
 | LLM | OpenRouter, Groq, Nvidia NIM, or Google Gemini |
 | Source preview | PyMuPDF highlights (PNG preview + downloadable annotated PDF) |
 | Config | python-dotenv |
@@ -265,6 +266,7 @@ This prevents one large PDF from filling all retrieval slots.
 | **Per-session Chroma (React)** | `chroma_db/api_sessions/{id}/` | Isolates sessions; survives API restart when `session_id` is restored |
 | **Per-session chat history** | SQLite (`sqlite_memory.py`) | Persists conversation turns to `./data/chat_memory.db` |
 | **Balanced retrieval** | Per-file + global merge | Plain top-k failed on multi-PDF - one document dominated results |
+| **Structured logging** | Python `logging` in every module | Traces every API call, LLM invocation, indexing step, and error in terminal |
 | **Overview routing** | Regex intent detection | `"summarise"` and `"each pdf"` need guaranteed per-file context |
 | **Citation diversity** | Per-PDF minimum in UI | Answer could mention 2 PDFs while sources showed only 1 |
 | **Precise highlight targeting** | Line-aware phrase search | Cited `page` + `line` should highlight that line, not broad page text |
@@ -302,6 +304,7 @@ This prevents one large PDF from filling all retrieval slots.
 - **Local embeddings + remote LLM is a practical split.** Embeddings are free and private; only generation needs an API key.
 - **Duplicate uploads need explicit rejection.** The app now blocks already-indexed files and duplicate filenames in the same upload batch, returning the existing document reference.
 - **Line-aware highlighting improves trust.** Narrowing highlights to the cited line/fragment avoids broad page-wide marks that look imprecise.
+- **Structured logging is essential for debugging RAG.** Every module logs API calls, LLM invocations, indexing steps, and errors to the terminal with timestamps, log levels, and module names.
 
 ---
 
@@ -466,6 +469,34 @@ multi-pdf-chatbot/
 - [Design document](docs/DESIGN.md) — architecture, pipelines, API, decisions
 - [User manual](docs/USER_MANUAL.md) — step-by-step usage guide
 - [Multimodal design](docs/MULTIMODAL_DESIGN.md) — image extraction, Gemma captions, RAG integration
+
+## Logging
+
+Every module uses Python's `logging` library. Logs stream to the terminal (or browser console for Streamlit) with the format:
+
+```
+2026-07-03 15:30:00 | INFO    | rag_chain | RAG query: What is the main topic?
+```
+
+**What is logged:**
+
+| Category | Examples |
+|---|---|
+| Startup config | Active LLM provider, image extraction flags |
+| PDF ingestion | File load, page count, chunking stats |
+| Vector store | Embedding model load, ChromaDB create/open, chunk counts |
+| LLM calls | Provider/model selection, query text, response length, errors |
+| Image pipeline | Extraction counts, captioning API calls, caption validation |
+| Chat memory | Session create/delete, message append/clear |
+| API endpoints | Every request with method, path, session ID, and timing |
+
+Set the log level via environment variable if needed:
+
+```env
+LOG_LEVEL=DEBUG   # DEBUG, INFO (default), WARNING, ERROR
+```
+
+---
 
 ## Known limitations
 

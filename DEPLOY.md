@@ -56,6 +56,7 @@ Deploy the **backend first**, then the frontend (you need the API URL for `VITE_
 | `OPENROUTER_MODEL` | e.g. `google/gemma-2-9b-it:free` | No |
 | `VECTOR_STORE` | `chroma` | No |
 | `STREAMLIT_APP_URL` | `https://multi-pdf-chatbot-rb.streamlit.app/` | No |
+| `LOG_LEVEL` | `INFO` (or `DEBUG` for troubleshooting) | No |
 | `FRONTEND_ALLOWED_ORIGINS` | *(set after frontend deploy — step 5)* | No |
 
 Click **Save Changes** → Render builds and deploys.

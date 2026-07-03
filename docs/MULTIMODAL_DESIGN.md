@@ -95,6 +95,18 @@ Streamlit shows *Indexed from extracted image captions instead* when step 4 runs
 | SQLite | Image paths + Gemma captions |
 | LLM context | Caption text appended at retrieval time |
 
+## Logging
+
+Every image pipeline module (`pdf_image_extractor`, `image_store`, `image_captioner`, `pdf_image_pipeline`, `image_rag`) uses Python's `logging` library. Logs include:
+
+- Image extraction counts and page scans
+- Caption API calls (provider, model, image name, response length)
+- Manifest DB inserts, updates, and deletes
+- Retriever enrichment steps and document counts
+- Errors with full stack traces
+
+Set `LOG_LEVEL=DEBUG` for verbose output (e.g. per-image captioning details).
+
 ## Limitations
 
 - **Embedded images only** — full-page scans without embedded image objects require page rendering (future stretch).

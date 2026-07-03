@@ -239,6 +239,7 @@ For questions like "Summarise each document" or "What is each PDF about?", uploa
 | Same file not re-indexed | Duplicate rejection by filename | Rename the file and upload again |
 | Chat history gone after refresh | New browser session / new `session_id` | Same session may reload messages from SQLite locally; hosted demos are ephemeral |
 | Slow first response | Embedding model + LLM + image captioning | Normal on cold start; subsequent questions are faster |
+| Need to see detailed logs | Debugging an issue | Set `LOG_LEVEL=DEBUG` in `.env` or the terminal environment; logs print to the terminal with timestamps and module names |
 
 ---
 
@@ -290,6 +291,9 @@ cp .env.example .env   # add API keys for at least one provider
 # IMAGE_CAPTION_ENABLED=true
 # IMAGE_CAPTION_MODEL=google/gemma-3-12b-it
 
+# Logging (optional — default is INFO)
+# LOG_LEVEL=DEBUG
+
 # React + API (recommended)
 python run_dev.py
 # → http://localhost:5173 (UI) and http://localhost:8000 (API)
@@ -327,4 +331,4 @@ For technical depth, see [DESIGN.md](./DESIGN.md) and [MULTIMODAL_DESIGN.md](./M
 
 ---
 
-*Last updated for SQLite chat memory, image extraction + Gemma captions, caption-chunk fallback, multi-provider LLM support, Models dropdown, duplicate upload rejection, and line-aware source highlighting.*
+*Last updated for SQLite chat memory, image extraction + Gemma captions, caption-chunk fallback, multi-provider LLM support, Models dropdown, duplicate upload rejection, line-aware source highlighting, and structured logging across all modules.*

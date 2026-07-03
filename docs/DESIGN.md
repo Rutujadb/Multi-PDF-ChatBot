@@ -111,6 +111,7 @@ Both paths call the same core modules (`pdf_processor`, `pdf_image_pipeline`, `v
 | RAG chain | `rag_chain.py` | ConversationalRetrievalChain, SQLite chat history, LLM calls |
 | Chat memory | `sqlite_memory.py` | SQLite schema, CRUD, `SqliteChatMessageHistory` |
 | Citations | `citation_utils.py`, `utils.py` | Source chips, answer alignment, intent routing |
+| Logging | All `.py` modules | Structured `logging` output: API calls, LLM invocations, indexing, errors |
 | Configuration | `config.py` | Constants, env vars, CORS origins, `get_available_llm_options()` |
 
 ---
@@ -302,6 +303,7 @@ After indexing, `generate_suggested_questions()` retrieves broad context and ask
 | LLM providers | OpenRouter, Groq, Nvidia, Gemini | Single provider only | Runtime choice via UI; keys from `.env` |
 | LLM sampling | `top_p=0.85`, `top_k=40` | Provider defaults | Reduces odd word choices while preserving natural variation |
 | Source preview (Streamlit Cloud) | PNG not iframe PDF | Embedded PDF viewer | Chrome blocks PDF iframes on Streamlit Cloud |
+| Structured logging | Python `logging` in every module | `print` statements | Consistent timestamped format with levels and module names; configurable via `LOG_LEVEL` env var |
 | Lazy imports (API) | Deferred torch/LangChain load | Eager import at startup | Render free tier (512 MB) OOM on cold start |
 
 ---
@@ -532,6 +534,7 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 | `IMAGE_DB_PATH` | No | SQLite image manifest (default `./data/image_manifest.db`) |
 | `EXTRACTED_IMAGES_DIR` | No | On-disk image folder (default `./data/extracted_images`) |
 | `STREAMLIT_APP_URL` | No | Link shown in React dashboard |
+| `LOG_LEVEL` | No | Python log level: `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
 | `FRONTEND_ALLOWED_ORIGINS` | Production | Comma-separated CORS origins for Vercel/Pages |
 
 Frontend (Vercel):
@@ -577,6 +580,7 @@ See [DEPLOY.md](../DEPLOY.md) for production setup.
 - **Image-only PDFs need a fallback path.** Text chunking alone yields zero vectors; caption chunks unblock chat.
 - **Do not store images in Chroma.** Gemma captions as text + disk references match the multimodal design constraint.
 - **Validate indexing before declaring success.** Empty Chroma collections previously left chat disabled with a misleading success toast.
+- **Structured logging is essential for debugging RAG.** Every module logs API calls, LLM invocations, indexing steps, and errors to the terminal with timestamps and module names, making it possible to trace an entire request through the pipeline.
 
 ---
 
