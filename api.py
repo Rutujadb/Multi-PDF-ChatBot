@@ -392,6 +392,9 @@ def answer_question(session: AppSession, prompt: str) -> Dict[str, Any]:
         prompt,
         session.vector_store,
         chat_history=session.ensure_memory(),
+        retriever=_get_retriever(session.vector_store, session.session_id),
+        llm_provider=session.llm_provider,
+        llm_model=session.llm_model,
     )
 
 
@@ -666,7 +669,17 @@ async def upload_pdfs(
     )
 
     indexed_count = len(indexed_names)
+    used_caption_index = any(
+        chunk.metadata.get("from_image_captions") for chunk in chunks
+    )
     message = f"{indexed_count} PDF(s) indexed."
+    if used_caption_index and image_summary.get("captioned", 0) > 0:
+        message += (
+            f" Indexed from {image_summary['captioned']} image description(s) "
+            "(no selectable text in PDF)."
+        )
+    elif used_caption_index:
+        message += " Indexed with limited image caption data."
     if failed:
         message += f" Could not read: {', '.join(failed)}."
     if invalid_files:

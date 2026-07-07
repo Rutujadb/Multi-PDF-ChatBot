@@ -50,7 +50,7 @@ from config import (
 )
 from citation_utils import ensure_page_label, is_refusal_answer, resolve_citation_sources
 from image_rag import enrich_documents_with_image_context
-from utils import format_llm_error
+from utils import format_llm_error, is_rate_limit_error
 from vector_store import get_indexed_filenames, retrieve_balanced_documents
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,45 @@ def get_llm(
     )
 
 
+def invoke_chat_llm_with_fallback(
+    prompt: str,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> str:
+    """Invoke a chat LLM, retrying with other configured providers on rate limits."""
+    from config import get_chat_model_attempts
+
+    attempts = get_chat_model_attempts(llm_provider, llm_model)
+    last_error: Optional[Exception] = None
+    for index, (provider, model) in enumerate(attempts):
+        try:
+            response = get_llm(llm_provider=provider, llm_model=model).invoke(prompt)
+            answer = getattr(response, "content", str(response))
+            if is_rate_limit_error(answer):
+                if index < len(attempts) - 1:
+                    logger.warning(
+                        "LLM rate-limited on %s/%s; trying fallback",
+                        provider,
+                        model,
+                    )
+                    continue
+                return format_llm_error(RuntimeError(answer))
+            return answer
+        except Exception as exc:
+            last_error = exc
+            if is_rate_limit_error(exc) and index < len(attempts) - 1:
+                logger.warning(
+                    "LLM rate-limited on %s/%s; trying fallback",
+                    provider,
+                    model,
+                )
+                continue
+            return format_llm_error(exc)
+    if last_error is not None:
+        return format_llm_error(last_error)
+    return "Sorry, I could not generate an answer."
+
+
 def get_memory(session_id: str) -> BaseChatMessageHistory:
     """Return SQLite-backed chat history for one session."""
     from sqlite_memory import SqliteChatMessageHistory, create_session
@@ -210,11 +249,63 @@ def build_rag_chain(
     return chain
 
 
+def _invoke_rag_chain(
+    chain: ConversationalRetrievalChain,
+    question: str,
+    vector_store=None,
+    chat_history: Optional[BaseChatMessageHistory] = None,
+) -> Dict[str, Any]:
+    """Run one RAG chain invocation and resolve citations."""
+    history_messages: list[BaseMessage] = (
+        list(chat_history.messages) if chat_history is not None else []
+    )
+    logger.debug("Chat history contains %d messages", len(history_messages))
+    result = chain.invoke(
+        {"question": question, "chat_history": history_messages}
+    )
+    answer = result.get(
+        "answer", "Sorry, I could not generate an answer."
+    )
+    if is_rate_limit_error(answer):
+        raise RuntimeError(answer)
+    logger.info(
+        "LLM answered (%d chars), %d source docs returned",
+        len(answer),
+        len(result.get("source_documents", [])),
+    )
+    if chat_history is not None:
+        chat_history.add_messages(
+            [HumanMessage(content=question), AIMessage(content=answer)]
+        )
+    raw_sources = result.get("source_documents", [])
+    for doc in raw_sources:
+        ensure_page_label(doc)
+    if is_refusal_answer(answer):
+        cited_sources = []
+    else:
+        cited_sources = resolve_citation_sources(
+            answer,
+            question,
+            raw_sources,
+            vector_store=vector_store,
+            max_sources=CITATION_MAX_SOURCES,
+        )
+    logger.info("Citations resolved: %d sources", len(cited_sources))
+    return {
+        "answer": answer,
+        "source_documents": cited_sources,
+    }
+
+
 def query_chain(
     chain: ConversationalRetrievalChain,
     question: str,
     vector_store=None,
     chat_history: Optional[BaseChatMessageHistory] = None,
+    *,
+    retriever: Optional[BaseRetriever] = None,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Invoke the RAG chain with a user question.
 
@@ -222,56 +313,69 @@ def query_chain(
     sees a raw stack trace (NFR-REL-03). Returned ``source_documents`` are
     filtered to chunks that best support the generated answer.
 
+    When the selected model is rate-limited, automatically retries with other
+    configured providers (Gemini, Groq, Nvidia, etc.).
+
     Args:
         chain: A built ``ConversationalRetrievalChain``.
         question: The user's question.
         vector_store: Optional vector store for answer-aligned citation search.
+        chat_history: Session chat history for follow-up context.
+        retriever: Optional retriever used to rebuild the chain on fallback.
+        llm_provider: Active chat provider for fallback ordering.
+        llm_model: Active chat model for fallback ordering.
 
     Returns:
         Dict with ``answer`` (str) and ``source_documents`` (list of Documents).
     """
-    try:
-        logger.info("RAG query: %s", question[:120])
-        history_messages: list[BaseMessage] = (
-            list(chat_history.messages) if chat_history is not None else []
-        )
-        logger.debug("Chat history contains %d messages", len(history_messages))
-        result = chain.invoke(
-            {"question": question, "chat_history": history_messages}
-        )
-        answer = result.get(
-            "answer", "Sorry, I could not generate an answer."
-        )
-        logger.info("LLM answered (%d chars), %d source docs returned",
-                     len(answer), len(result.get("source_documents", [])))
-        if chat_history is not None:
-            chat_history.add_messages(
-                [HumanMessage(content=question), AIMessage(content=answer)]
+    from config import get_chat_model_attempts
+
+    logger.info("RAG query: %s", question[:120])
+    attempts = get_chat_model_attempts(llm_provider, llm_model)
+    last_error: Optional[Exception] = None
+
+    for index, (provider, model) in enumerate(attempts):
+        active_chain = chain
+        if index > 0:
+            if retriever is None or chat_history is None:
+                break
+            logger.warning(
+                "Chat rate-limited; retrying with fallback model %s/%s",
+                provider,
+                model,
             )
-        raw_sources = result.get("source_documents", [])
-        for doc in raw_sources:
-            ensure_page_label(doc)
-        if is_refusal_answer(answer):
-            cited_sources = []
-        else:
-            cited_sources = resolve_citation_sources(
-                answer,
+            active_chain = build_rag_chain(
+                retriever,
+                chat_history,
+                llm_provider=provider,
+                llm_model=model,
+            )
+        try:
+            return _invoke_rag_chain(
+                active_chain,
                 question,
-                raw_sources,
                 vector_store=vector_store,
-                max_sources=CITATION_MAX_SOURCES,
+                chat_history=chat_history,
             )
-        logger.info("Citations resolved: %d sources", len(cited_sources))
+        except Exception as exc:
+            last_error = exc
+            if is_rate_limit_error(exc) and index < len(attempts) - 1:
+                continue
+            logger.error("RAG query failed: %s", exc, exc_info=True)
+            return {
+                "answer": format_llm_error(exc),
+                "source_documents": [],
+            }
+
+    if last_error is not None:
         return {
-            "answer": answer,
-            "source_documents": cited_sources,
-        }
-    except Exception as e:
-        logger.error("RAG query failed: %s", e, exc_info=True)
-        return {
-            "answer": format_llm_error(e),
+            "answer": format_llm_error(last_error),
             "source_documents": [],
         }
+    return {
+        "answer": "Sorry, I could not generate an answer.",
+        "source_documents": [],
+    }
 
 
 def answer_from_chat_history(
@@ -328,14 +432,11 @@ def answer_from_chat_history(
                 f"Conversation history:\n{history_text}\n\n"
                 f"Question: {question}\nAnswer:"
             )
-            try:
-                response = get_llm(
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
-                ).invoke(prompt)
-                answer = getattr(response, "content", str(response))
-            except Exception as exc:
-                answer = format_llm_error(exc)
+            answer = invoke_chat_llm_with_fallback(
+                prompt,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+            )
 
     if chat_history is not None:
         chat_history.add_messages(
@@ -532,31 +633,28 @@ def answer_from_documents(
     )
     prompt = _qa_template().format(context=context, question=question)
 
-    try:
-        logger.info("Invoking LLM for document-targeted answer…")
-        response = get_llm(
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-        ).invoke(prompt)
-        answer = getattr(response, "content", str(response))
-        logger.info("LLM response received (%d chars)", len(answer))
-        if is_refusal_answer(answer):
-            cited = []
-        else:
-            cited = resolve_citation_sources(
-                answer,
-                question,
-                labeled_docs,
-                vector_store=vector_store,
-                max_sources=CITATION_MAX_SOURCES,
-            )
-        return {"answer": answer, "source_documents": cited}
-    except Exception as e:
-        logger.error("LLM call failed for document-targeted answer: %s", e, exc_info=True)
-        return {
-            "answer": format_llm_error(e),
-            "source_documents": [],
-        }
+    answer = invoke_chat_llm_with_fallback(
+        prompt,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+    )
+    if answer.startswith("The selected AI model is temporarily rate-limited") or answer.startswith(
+        "The AI API key was rejected"
+    ) or answer.startswith("Error generating answer:"):
+        return {"answer": answer, "source_documents": []}
+
+    logger.info("LLM response received (%d chars)", len(answer))
+    if is_refusal_answer(answer):
+        cited = []
+    else:
+        cited = resolve_citation_sources(
+            answer,
+            question,
+            labeled_docs,
+            vector_store=vector_store,
+            max_sources=CITATION_MAX_SOURCES,
+        )
+    return {"answer": answer, "source_documents": cited}
 
 
 def _qa_template() -> str:

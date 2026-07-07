@@ -108,6 +108,5 @@ def extract_images_from_pdf(
     finally:
         doc.close()
 
-    logger.info("Extracted %d image(s) from %s (%d pages scanned)",
-                len(records), source, len(doc) if hasattr(doc, '__len__') else 0)
+    
     return records
