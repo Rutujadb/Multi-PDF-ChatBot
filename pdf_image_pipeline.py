@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from config import IMAGE_CAPTION_ENABLED, IMAGE_CAPTION_MODEL, IMAGE_EXTRACTION_ENABLED
+from config import IMAGE_CAPTION_ENABLED, IMAGE_EXTRACTION_ENABLED
 from image_captioner import caption_image
 from image_store import insert_images, list_images, update_caption
 from pdf_image_extractor import extract_images_from_pdf
@@ -70,13 +70,13 @@ def process_pdf_images(
         for row in stored_rows:
             if row.get("caption"):
                 continue
-            caption = caption_image(
+            caption, caption_model = caption_image(
                 Path(row["file_path"]),
                 source=row.get("source", source),
                 page_label=str(row.get("page_label", "")),
             )
             if _is_valid_caption(caption):
-                update_caption(row["image_id"], caption, IMAGE_CAPTION_MODEL)
+                update_caption(row["image_id"], caption, caption_model)
                 captioned += 1
 
     logger.info("Image pipeline done for %s: extracted=%d, stored=%d, captioned=%d",

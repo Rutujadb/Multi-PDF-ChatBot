@@ -6,7 +6,7 @@ import base64
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from langchain_core.messages import HumanMessage
 
@@ -16,8 +16,9 @@ from config import (
     IMAGE_CAPTION_PROVIDER,
     IMAGE_CAPTION_ENABLED,
     OPENROUTER_API_KEY,
+    get_image_caption_model_attempts,
 )
-from utils import format_llm_error
+from utils import is_rate_limit_error
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,17 @@ logger = logging.getLogger(__name__)
 _CAPTION_PROMPT = """Describe this image extracted from a PDF page for a document Q&A system.
 Include visible text, chart titles, axis labels, table headers, diagram labels, and the main subject.
 Be factual and concise. Do not invent content that is not visible in the image."""
+
+_INVALID_CAPTION_MARKERS = (
+    "rate limit",
+    "rate-limited",
+    "api key",
+    "unauthorized",
+    "429",
+    "error:",
+    "failed to",
+    "error generating answer",
+)
 
 
 def _image_mime_type(path: Path) -> str:
@@ -38,6 +50,15 @@ def _image_data_url(path: Path) -> str:
     mime = _image_mime_type(path)
     encoded = base64.standard_b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{encoded}"
+
+
+def _is_invalid_caption_text(text: str) -> bool:
+    """Return True when caption text looks like an API failure, not a description."""
+    body = (text or "").strip()
+    if len(body) < 10:
+        return True
+    lowered = body.lower()
+    return any(marker in lowered for marker in _INVALID_CAPTION_MARKERS)
 
 
 def get_caption_llm(
@@ -65,26 +86,30 @@ def caption_image(
     page_label: str = "",
     provider: Optional[str] = None,
     model: Optional[str] = None,
-) -> str:
-    """Describe one extracted PDF image with a Gemma-family vision model.
+) -> Tuple[str, str]:
+    """Describe one extracted PDF image with a vision model.
+
+    Tries the primary caption model first, then a configured free fallback when
+    rate limits or retryable failures occur.
 
     Args:
         image_path: Path to the saved image file.
         source: Optional PDF filename for prompt context.
         page_label: Optional 1-based page label for prompt context.
-        provider: Optional provider override.
-        model: Optional model override.
+        provider: Optional provider override for the primary attempt only.
+        model: Optional model override for the primary attempt only.
 
     Returns:
-        A plain-text caption, or an empty string when captioning is disabled or fails.
+        Tuple of ``(caption_text, caption_model)``. Both are empty when captioning
+        is disabled or every attempt fails.
     """
     if not IMAGE_CAPTION_ENABLED:
-        return ""
+        return "", ""
 
     path = Path(image_path)
     if not path.is_file():
         logger.warning("Image file not found for captioning: %s", image_path)
-        return ""
+        return "", ""
 
     logger.info("Captioning image: %s (source=%s, page=%s)", path.name, source, page_label)
 
@@ -105,11 +130,79 @@ def caption_image(
         ]
     )
 
-    try:
-        response = get_caption_llm(provider=provider, model=model).invoke([message])
-        text = getattr(response, "content", str(response)).strip()
-        logger.info("Caption generated for %s (%d chars)", path.name, len(text))
-        return text
-    except Exception as exc:
-        logger.error("Caption API call failed for %s: %s", path.name, exc, exc_info=True)
-        return format_llm_error(exc)
+    if provider or model:
+        attempts = [
+            (
+                (provider or IMAGE_CAPTION_PROVIDER).strip().lower(),
+                model or IMAGE_CAPTION_MODEL,
+            )
+        ]
+        for prov, mod in get_image_caption_model_attempts():
+            if (prov, mod) not in attempts:
+                attempts.append((prov, mod))
+    else:
+        attempts = get_image_caption_model_attempts()
+
+    if not attempts:
+        logger.warning("No caption models configured with valid API keys")
+        return "", ""
+
+    last_error: Optional[Exception] = None
+    for index, (prov, mod) in enumerate(attempts):
+        is_last = index == len(attempts) - 1
+        try:
+            response = get_caption_llm(provider=prov, model=mod).invoke([message])
+            text = getattr(response, "content", str(response)).strip()
+            if _is_invalid_caption_text(text):
+                if is_rate_limit_error(text) and not is_last:
+                    logger.warning(
+                        "Caption rate-limited on %s/%s; trying fallback model",
+                        prov,
+                        mod,
+                    )
+                    continue
+                logger.warning(
+                    "Invalid caption response from %s/%s: %s",
+                    prov,
+                    mod,
+                    text[:120],
+                )
+                if not is_last:
+                    continue
+                return "", ""
+
+            logger.info(
+                "Caption generated for %s using %s/%s (%d chars)",
+                path.name,
+                prov,
+                mod,
+                len(text),
+            )
+            return text, mod
+        except Exception as exc:
+            last_error = exc
+            if is_rate_limit_error(exc) and not is_last:
+                logger.warning(
+                    "Caption API rate-limited on %s/%s; trying fallback model",
+                    prov,
+                    mod,
+                )
+                continue
+            logger.error(
+                "Caption API call failed for %s on %s/%s: %s",
+                path.name,
+                prov,
+                mod,
+                exc,
+                exc_info=True,
+            )
+            if not is_last:
+                continue
+
+    if last_error is not None:
+        logger.error(
+            "All caption attempts failed for %s: %s",
+            path.name,
+            last_error,
+        )
+    return "", ""

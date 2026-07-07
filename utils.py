@@ -280,21 +280,29 @@ def build_chat_export(messages: List[dict], fmt: str = "md") -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def format_llm_error(exc: Exception) -> str:
-    """Return a plain-English message for LLM provider failures."""
-    text = str(exc)
+def is_rate_limit_error(exc_or_text: Exception | str) -> bool:
+    """Return True when an exception or response text indicates rate limiting."""
+    text = str(exc_or_text)
     lowered = text.lower()
-    if (
+    return (
         "429" in text
         or "rate-limit" in lowered
         or "rate limit" in lowered
         or "rate limited" in lowered
-    ):
+        or "temporarily rate-limited" in lowered
+    )
+
+
+def format_llm_error(exc: Exception) -> str:
+    """Return a plain-English message for LLM provider failures."""
+    if is_rate_limit_error(exc):
         return (
             "The selected AI model is temporarily rate-limited. Wait a minute "
             "and try again, or switch to another provider/model in the Models "
             "dropdown (for example Groq, Nvidia, or Gemini if configured)."
         )
+    text = str(exc)
+    lowered = text.lower()
     if "401" in text or "403" in text or "invalid api key" in lowered:
         return (
             "The AI API key was rejected. Check your .env file and ensure the "

@@ -353,6 +353,9 @@ IMAGE_EXTRACTION_ENABLED=true
 IMAGE_CAPTION_ENABLED=true
 IMAGE_CAPTION_PROVIDER=openrouter
 IMAGE_CAPTION_MODEL=google/gemma-3-12b-it
+# Fallback when primary caption model is rate-limited (auto: Gemini if GOOGLE_API_KEY set)
+# IMAGE_CAPTION_FALLBACK_PROVIDER=openrouter
+# IMAGE_CAPTION_FALLBACK_MODEL=google/gemma-3-4b-it:free
 
 VECTOR_STORE=chroma
 CHAT_DB_PATH=./data/chat_memory.db

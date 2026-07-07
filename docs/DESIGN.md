@@ -531,6 +531,8 @@ Returns a PNG image (base64 or binary response per `api_source_preview.py` imple
 | `IMAGE_CAPTION_ENABLED` | No | Caption images with Gemma vision at ingest (default `true`) |
 | `IMAGE_CAPTION_PROVIDER` | No | `openrouter` or `gemini` for vision model |
 | `IMAGE_CAPTION_MODEL` | No | Vision-capable Gemma slug (e.g. `google/gemma-3-12b-it`) |
+| `IMAGE_CAPTION_FALLBACK_PROVIDER` | No | Fallback provider when primary caption model is rate-limited |
+| `IMAGE_CAPTION_FALLBACK_MODEL` | No | Fallback model (default: `gemini-2.0-flash` or `google/gemma-3-4b-it:free`) |
 | `IMAGE_DB_PATH` | No | SQLite image manifest (default `./data/image_manifest.db`) |
 | `EXTRACTED_IMAGES_DIR` | No | On-disk image folder (default `./data/extracted_images`) |
 | `STREAMLIT_APP_URL` | No | Link shown in React dashboard |

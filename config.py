@@ -1,6 +1,8 @@
 import logging
 import os
 from pathlib import Path
+from typing import Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -121,6 +123,110 @@ elif GOOGLE_API_KEY:
     IMAGE_CAPTION_PROVIDER = "gemini"
 else:
     IMAGE_CAPTION_PROVIDER = LLM_PROVIDER
+
+_image_caption_fallback_provider = os.getenv(
+    "IMAGE_CAPTION_FALLBACK_PROVIDER", ""
+).strip().lower()
+_image_caption_fallback_model = os.getenv("IMAGE_CAPTION_FALLBACK_MODEL", "").strip()
+
+if _image_caption_fallback_provider in ("openrouter", "groq", "nvidia", "gemini"):
+    IMAGE_CAPTION_FALLBACK_PROVIDER = _image_caption_fallback_provider
+    IMAGE_CAPTION_FALLBACK_MODEL = (
+        _image_caption_fallback_model or "google/gemma-3-4b-it:free"
+    )
+elif GOOGLE_API_KEY:
+    IMAGE_CAPTION_FALLBACK_PROVIDER = "gemini"
+    IMAGE_CAPTION_FALLBACK_MODEL = (
+        _image_caption_fallback_model or "gemini-2.0-flash"
+    )
+elif OPENROUTER_API_KEY:
+    IMAGE_CAPTION_FALLBACK_PROVIDER = "openrouter"
+    IMAGE_CAPTION_FALLBACK_MODEL = (
+        _image_caption_fallback_model or "google/gemma-3-4b-it:free"
+    )
+else:
+    IMAGE_CAPTION_FALLBACK_PROVIDER = ""
+    IMAGE_CAPTION_FALLBACK_MODEL = ""
+
+_CAPTION_PROVIDER_KEYS = {
+    "openrouter": OPENROUTER_API_KEY,
+    "groq": GROQ_API_KEY,
+    "nvidia": NVIDIA_API_KEY,
+    "gemini": GOOGLE_API_KEY,
+}
+
+
+def get_image_caption_model_attempts() -> list[tuple[str, str]]:
+    """Return ordered provider/model pairs for image captioning (primary + fallback)."""
+    attempts: list[tuple[str, str]] = []
+    primary = (IMAGE_CAPTION_PROVIDER.strip().lower(), IMAGE_CAPTION_MODEL)
+    if primary[0] in _CAPTION_PROVIDER_KEYS and _CAPTION_PROVIDER_KEYS[primary[0]]:
+        attempts.append(primary)
+
+    fallback_provider = (IMAGE_CAPTION_FALLBACK_PROVIDER or "").strip().lower()
+    fallback_model = (IMAGE_CAPTION_FALLBACK_MODEL or "").strip()
+    if fallback_provider and fallback_model:
+        fallback = (fallback_provider, fallback_model)
+        if (
+            fallback not in attempts
+            and fallback_provider in _CAPTION_PROVIDER_KEYS
+            and _CAPTION_PROVIDER_KEYS[fallback_provider]
+        ):
+            attempts.append(fallback)
+    return attempts
+
+
+def _chat_fallback_priority(pair: tuple[str, str]) -> tuple[int, str]:
+    """Rank chat fallback models; prefer Gemini/Groq over OpenRouter free tiers."""
+    provider, model = pair
+    model_lower = model.lower()
+    if ":free" in model_lower:
+        return (4, model_lower)
+    if provider == "gemini":
+        return (0, model_lower)
+    if provider == "groq":
+        return (1, model_lower)
+    if provider == "nvidia":
+        return (2, model_lower)
+    if provider == "openrouter":
+        return (3, model_lower)
+    return (5, model_lower)
+
+
+def get_chat_model_attempts(
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> list[tuple[str, str]]:
+    """Return ordered provider/model pairs for chat with rate-limit fallbacks."""
+    primary = (
+        (llm_provider or LLM_PROVIDER).strip().lower(),
+        llm_model or get_active_llm_name(),
+    )
+    options = get_available_llm_options()
+    seen: set[tuple[str, str]] = set()
+    attempts: list[tuple[str, str]] = []
+
+    def _add(pair: tuple[str, str]) -> None:
+        provider, model = pair
+        if (
+            provider in _CAPTION_PROVIDER_KEYS
+            and _CAPTION_PROVIDER_KEYS[provider]
+            and model
+            and pair not in seen
+        ):
+            seen.add(pair)
+            attempts.append(pair)
+
+    _add(primary)
+    fallbacks = [
+        (opt["provider"], opt["model"])
+        for opt in options
+        if (opt["provider"], opt["model"]) != primary
+    ]
+    fallbacks.sort(key=_chat_fallback_priority)
+    for pair in fallbacks:
+        _add(pair)
+    return attempts
 
 
 def get_active_llm_name() -> str:

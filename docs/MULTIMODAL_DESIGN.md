@@ -58,6 +58,20 @@ IMAGE_MIN_HEIGHT=50
 
 Use a **vision-capable** Gemma model. Text-only models (e.g. `google/gemma-2-9b-it:free`) cannot caption images.
 
+**Rate-limit fallback:** If the primary caption model is rate-limited, the app automatically retries with a free fallback:
+
+| Condition | Default fallback |
+|-----------|------------------|
+| `GOOGLE_API_KEY` set | `gemini` / `gemini-2.0-flash` |
+| OpenRouter only | `openrouter` / `google/gemma-3-4b-it:free` |
+
+Override in `.env`:
+
+```env
+IMAGE_CAPTION_FALLBACK_PROVIDER=openrouter
+IMAGE_CAPTION_FALLBACK_MODEL=google/gemma-3-4b-it:free
+```
+
 ## Ingest pipeline
 
 1. Save PDF to `uploaded_pdfs/`

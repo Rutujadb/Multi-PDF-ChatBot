@@ -334,6 +334,8 @@ def process_uploaded_pdfs(uploaded_files):
         return
 
     with st.spinner(f"Processing {len(new_files)} PDF(s)..."):
+        image_totals = {"extracted": 0, "captioned": 0}
+        used_caption_index = False
         for uploaded in new_files:
             uploaded.seek(0)
             save_uploaded_pdf(uploaded.name, uploaded.read())
@@ -346,10 +348,14 @@ def process_uploaded_pdfs(uploaded_files):
                     uploaded.name,
                     pdf_path,
                 )
+                image_totals["extracted"] += image_stats.get("extracted", 0)
+                image_totals["captioned"] += image_stats.get("captioned", 0)
                 if image_stats.get("extracted", 0) > 0:
+                    captioned = image_stats.get("captioned", 0)
                     st.caption(
                         f"Extracted {image_stats['extracted']} image(s) from "
-                        f"{uploaded.name}."
+                        f"{uploaded.name}"
+                        + (f" ({captioned} captioned)." if captioned else ".")
                     )
 
         logger.info("Loading text from %d PDF(s)", len(new_files))
@@ -365,9 +371,7 @@ def process_uploaded_pdfs(uploaded_files):
                 st.error("No readable text found in the uploaded PDF(s).")
                 return
             chunks = caption_chunks
-            st.info(
-                "No selectable text found. Indexed from extracted image captions instead."
-            )
+            used_caption_index = True
         else:
             chunks = split_documents(documents)
             chunks = [chunk for chunk in chunks if (chunk.page_content or "").strip()]
@@ -377,9 +381,22 @@ def process_uploaded_pdfs(uploaded_files):
                     [upload.name for upload in new_files],
                 )
                 if chunks:
-                    st.info(
-                        "No text chunks found. Indexed from extracted image captions instead."
-                    )
+                    used_caption_index = True
+
+        if used_caption_index:
+            if image_totals["captioned"] > 0:
+                st.info(
+                    "This PDF has little or no selectable text. "
+                    f"Indexed using {image_totals['captioned']} image description(s) — "
+                    "you can chat about it now."
+                )
+            else:
+                st.warning(
+                    "This PDF has little or no selectable text and image captions "
+                    "could not be generated (often due to API rate limits). "
+                    "Try again after updating your API key or switching the caption "
+                    "fallback model in `.env`."
+                )
 
         if not chunks:
             st.error(
@@ -678,6 +695,12 @@ def answer_prompt(prompt: str) -> dict:
         prompt,
         st.session_state.vector_store,
         chat_history=st.session_state.memory,
+        retriever=get_retriever(
+            st.session_state.vector_store,
+            st.session_state.session_id,
+        ),
+        llm_provider=st.session_state.selected_llm_provider,
+        llm_model=st.session_state.selected_llm_model,
     )
 
 
